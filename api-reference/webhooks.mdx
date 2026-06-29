@@ -1,7 +1,7 @@
 ---
-title: "Process Submission Webhook"
+title: "Process Submission Webhook — QStash Code Execution"
 sidebarTitle: "Webhooks"
-description: "POST /api/webhooks/process-submission receives QStash messages to execute user code. Learn the payload format, security verification, and RUN vs SUBMIT handling."
+description: "POST /api/webhooks/process-submission handles QStash messages to execute user code. Covers payload format, signature verification, and RUN vs SUBMIT flow."
 ---
 
 Buildml offloads code execution to a background queue so that the browser is never blocked waiting for a Docker container to finish running tests. When a user clicks **Run** or **Submit**, a tRPC mutation publishes a message to **Upstash QStash**, which then delivers it to this webhook for processing.

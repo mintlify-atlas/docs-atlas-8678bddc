@@ -1,10 +1,10 @@
 ---
-title: "User Profile: Progress Tracking and Stats"
+title: "Buildml User Profile — Progress Tracking and Stats"
 sidebarTitle: "Profile"
-description: "Your Buildml profile shows solved problems by difficulty, a GitHub-style activity heatmap, and your overall rank. View other users' profiles via ?userId= query param."
+description: "Your Buildml profile tracks solved problems by difficulty, a year-long activity heatmap, and stat cards. Share any profile via the ?userId= param."
 ---
 
-Every Buildml user has a profile page that consolidates their progress across all problem sets. It shows how many problems they have solved at each difficulty tier, a GitHub-style activity heatmap for the past year, and headline stats. Profiles are also shareable — you can view any other user's profile by passing their ID in the URL.
+Every Buildml user has a profile page that consolidates their progress across all problem sets. It shows how many problems they have solved at each difficulty tier, a GitHub-style activity heatmap for the trailing year, and three headline stat cards (Total Solved, Streak, and Achievements). Profiles are shareable — you can view any other user's profile by passing their ID in the URL.
 
 ## Profile URLs
 
@@ -87,6 +87,18 @@ Profile data is loaded via the `user.getProfile` tRPC procedure (public procedur
   }
   ```
 </ResponseField>
+
+## Stat Cards
+
+The profile renders three stat cards in a responsive grid:
+
+| Stat | Source |
+|---|---|
+| **Total Solved** | `solvedCount` from `getProfile` — unique problems with a `PASS` submission |
+| **Streak** | Hardcoded placeholder (`12 days`) — not yet driven by live data |
+| **Achievements** | Hardcoded placeholder (`7 badges`) — not yet driven by live data |
+
+A **Level** badge is also shown next to the user's name. It is calculated as `Math.floor(solvedCount / 10) + 1`, so a user who has solved 0–9 problems is Level 1, 10–19 is Level 2, and so on.
 
 ## Difficulty Progress Bars
 

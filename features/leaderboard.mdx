@@ -1,7 +1,7 @@
 ---
-title: "Community Leaderboard: Track Top Solvers"
+title: "Buildml Community Leaderboard: Top Builders Ranked"
 sidebarTitle: "Leaderboard"
-description: "The Buildml leaderboard ranks users by the number of unique AI/ML problems they have solved. Rankings update in real time as submissions are processed."
+description: "The Buildml leaderboard ranks users by unique AI/ML problems solved. Rankings update in real time as submissions are processed by the executor."
 ---
 
 The Buildml leaderboard is a community ranking page that shows which builders have solved the most AI/ML problems on the platform. Rankings are driven entirely by accepted (`PASS`) submissions and update automatically as new solutions are judged by the executor.
@@ -70,7 +70,7 @@ If the user has not yet solved any problems they will still appear in the list; 
 
 ## Authentication
 
-The `/leaderboard` page is publicly accessible — anyone can view the rankings. However, the **Personal Standing** banner and the **You** badge on table rows only appear for authenticated users. The `user.getUserRank` query is a `protectedProcedure` and is only called when a session exists:
+The `/leaderboard` route is protected by Next.js middleware — unauthenticated visitors are redirected to `/signin` before they can view the rankings. Once signed in, the **Personal Standing** banner and the **You** badge on table rows are shown for the current user. The `user.getUserRank` query is a `protectedProcedure` and is only called when a session exists:
 
 ```typescript
 const { data: userRank } = api.user.getUserRank.useQuery(undefined, {

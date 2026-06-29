@@ -1,7 +1,7 @@
 ---
 title: "Buildml: Master AI/ML Through Hands-On Coding Challenges"
 sidebarTitle: "Introduction"
-description: "Buildml is an interactive platform to learn AI/ML by implementing algorithms from scratch. Write Python, run tests, and track progress with a community leaderboard."
+description: "Buildml is an interactive AI/ML platform to learn by implementing algorithms from scratch. Write Python, run tests, and track your progress."
 ---
 
 Buildml is a full-stack AI/ML education platform that replaces passive reading with active implementation. Instead of watching tutorials or skimming textbooks, you solve curated coding challenges by writing real Python — implementing neural networks, NumPy operations, and ML algorithms from scratch. Every submission is executed against automated tests, so you get immediate, objective feedback on whether your understanding is correct.
@@ -68,6 +68,20 @@ Next.js frontend  →  tRPC API  →  Upstash QStash (queue)
 | `ERROR` | Execution error (syntax, runtime, or timeout) |
 
 **Run vs Submit** — *Run* executes your code and streams the result directly to the browser from Redis. The result is ephemeral and does not count toward your score or leaderboard ranking. *Submit* records a permanent `Submission` row in PostgreSQL, updates your personal best, and feeds the leaderboard.
+
+## tRPC API Layer
+
+The server API is built with tRPC v11. The root router at `src/server/api/root.ts` composes five sub-routers:
+
+| Router | Purpose |
+|---|---|
+| `problem` | Fetch individual problems and their metadata |
+| `problemSet` | List and retrieve problem set collections |
+| `submission` | Run code (`submission.run`), submit solutions (`submission.submit`), and poll for results |
+| `user` | Read and update user profile data |
+| `feedback` | Submit platform feedback |
+
+Procedures are either `publicProcedure` (open, with timing middleware) or `protectedProcedure` (requires an authenticated session). All inputs are validated with Zod schemas. On the client, procedures are consumed as `api.[router].[procedure].useQuery()` or `.useMutation()`.
 
 ## Explore the Docs
 

@@ -1,7 +1,7 @@
 ---
-title: "Code Submission and Execution Pipeline"
+title: "Buildml Code Submission and Execution Pipeline Doc"
 sidebarTitle: "Submissions"
-description: "Buildml executes code asynchronously via Upstash QStash and a FastAPI executor service. Understand the Run vs Submit flow, status polling, and rate limits."
+description: "Buildml executes code asynchronously via Upstash QStash and a FastAPI executor. Learn the Run vs Submit flow, status polling, and rate limits."
 ---
 
 When you click **Run** or **Submit** in the code editor, your code travels through an asynchronous pipeline before results appear in the console. The pipeline is designed to handle execution outside the Next.js request/response cycle, keeping the UI responsive while potentially long-running test suites complete in the background.

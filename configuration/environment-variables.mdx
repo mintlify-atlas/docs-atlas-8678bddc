@@ -31,7 +31,11 @@ Buildml validates every environment variable at application startup using [`@t3-
 ## Authentication
 
 <ParamField path="NEXTAUTH_SECRET" type="string">
-  Random secret used by NextAuth.js v5 to sign and verify JWT session tokens. Also read via the `AUTH_SECRET` alias.
+  Random secret used by NextAuth.js to sign and verify JWT session tokens. The `runtimeEnv` in `src/env.js` reads this from `process.env.NEXTAUTH_SECRET` — you must use the key `NEXTAUTH_SECRET` in your `.env` file.
+
+  <Note>
+    The project's `.env.example` shows `AUTH_SECRET` (the NextAuth.js v5 default alias name), but `src/env.js` maps `NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET` directly. Setting `AUTH_SECRET` alone will **not** be picked up — use `NEXTAUTH_SECRET`.
+  </Note>
 
   - **Required in production** — the Zod schema enforces `z.string()` when `NODE_ENV === "production"`.
   - **Optional in development** — treated as `z.string().optional()` so local runs work without it.
@@ -57,7 +61,7 @@ Buildml validates every environment variable at application startup using [`@t3-
 
 ## Upstash Redis
 
-Buildml uses [Upstash Redis](https://upstash.com/redis) for rate limiting (via `@upstash/ratelimit`) and for storing ephemeral RUN results. The client is initialised in `src/lib/rate-limiter.ts` using `Redis.fromEnv()`, which reads these two variables automatically.
+Buildml uses [Upstash Redis](https://upstash.com/redis) for rate limiting (via `@upstash/ratelimit`) and for storing ephemeral RUN results. Two Redis clients are initialised in the codebase: `src/lib/rate-limiter.ts` uses `Redis.fromEnv()` (which reads these variables automatically by name), and `src/lib/redis.ts` constructs a `Redis` instance with the values explicitly via `env.UPSTASH_REDIS_REST_URL` and `env.UPSTASH_REDIS_REST_TOKEN`.
 
 <ParamField path="UPSTASH_REDIS_REST_URL" type="string" required>
   The HTTPS REST endpoint for your Upstash Redis database.
@@ -92,7 +96,7 @@ Buildml uses [Upstash Redis](https://upstash.com/redis) for rate limiting (via `
 ## Deployment
 
 <ParamField path="NEXT_PUBLIC_DEPLOYMENT_URL" type="string" required>
-  Full public URL of the deployed Next.js application, **without** a trailing slash. Internally mapped to `DEPLOYMENT_URL` in `src/env.js`. Used by the submission router to build the absolute callback URL passed to QStash so it knows where to deliver webhooks.
+  Full public URL of the deployed Next.js application, **without** a trailing slash. Internally mapped to `DEPLOYMENT_URL` in `src/env.js` via `runtimeEnv: { DEPLOYMENT_URL: process.env.NEXT_PUBLIC_DEPLOYMENT_URL }`. Used by the submission router to build the absolute callback URL passed to QStash so it knows where to deliver webhooks.
 
   **Examples:**
   - Production: `https://buildml.vercel.app`

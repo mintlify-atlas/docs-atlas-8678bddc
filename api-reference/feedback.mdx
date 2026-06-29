@@ -1,7 +1,7 @@
 ---
-title: "feedback Router: Submit User Feedback"
-sidebarTitle: "feedback"
-description: "The feedback.submit tRPC mutation accepts general, bug, feature, or improvement feedback and forwards it as a Discord embed via webhook. No authentication required."
+title: "feedback Router — Submit User Feedback via Discord"
+sidebarTitle: "Feedback"
+description: "The feedback.submit tRPC mutation accepts general, bug, feature, or improvement feedback and forwards it as a Discord embed. No auth required."
 ---
 
 The `feedbackRouter` exposes a single public mutation that collects user feedback and forwards it to a Discord channel as a rich embed. No authentication is required — any visitor can submit feedback. The mutation validates all input with Zod, formats a colour-coded Discord embed based on the feedback type, and returns a success acknowledgement. If the Discord webhook call fails for any reason, a `INTERNAL_SERVER_ERROR` is thrown.
@@ -86,7 +86,7 @@ When the mutation succeeds, Discord receives a payload with the following embed 
   "embeds": [
     {
       "title": "🐛 New Bug Report",
-      "color": 15164484,
+      "color": 15680580,
       "fields": [
         { "name": "From",    "value": "Alice",               "inline": true  },
         { "name": "Email",   "value": "alice@example.com",   "inline": true  },

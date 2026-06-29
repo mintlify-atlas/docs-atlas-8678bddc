@@ -1,7 +1,7 @@
 ---
-title: "Add New Problems and Problem Sets to Buildml"
+title: "Adding New AI/ML Problems and Problem Sets to Buildml"
 sidebarTitle: "Adding Problems"
-description: "Create a new AI/ML problem set or individual problem by writing a seed script, providing a Python template, and a test file for the FastAPI executor to run."
+description: "Add an AI/ML problem set by writing a TypeScript seed script, providing a Python starter template, and supplying a test file for the executor service."
 ---
 
 Buildml's problem library grows through community contributions. If you have an AI/ML concept, algorithm, or paper implementation that would make a good challenge, you can add it by writing a TypeScript seed script, providing a Python starter template for users, and supplying a test file for the executor service that grades submissions. This guide walks through every step of that process.
@@ -20,12 +20,16 @@ Before writing any code, it helps to understand how content is structured in the
 | `slug` | `String` (unique) | URL identifier — must be globally unique across all problems |
 | `description` | `String` (`@db.Text`) | Full problem statement; Markdown with KaTeX math supported |
 | `difficulty` | `String` | `"Easy"`, `"Medium"`, or `"Hard"` |
-| `templateCode` | `String` (`@db.Text`) | Python starter code shown to the user |
-| `testCode` | `String` (`@db.Text`) | Python verification script (or a reference comment pointing to the executor test) |
+| `templateCode` | `String` (`@db.Text`) | Python starter code shown to the user in the editor |
+| `testCode` | `String` (`@db.Text`) | Either a full Python test script or a reference comment pointing to the executor's test file |
 | `order` | `Int` | Display order within the problem set (1-indexed) |
 | `problemSetId` | `String?` | Foreign key linking to the parent `ProblemSet` |
 
 A `Submission` stores a user's code attempt alongside a `status` of `PENDING`, `PASS`, `FAIL`, or `ERROR`, with output from the executor written back to the `output` field.
+
+<Note>
+  `testCode` is **not** run directly by users. It is executed by the separate FastAPI executor service inside a Docker sandbox. Depending on the problem set pattern, `testCode` can either contain the full Python test script inline (as in the ML Fundamentals seed) or hold a reference comment pointing to a test file that lives in the executor service repository (as in the Attention and Neural Networks seeds). Either way, the executor — not the browser — runs the tests.
+</Note>
 
 ## Creating a New Problem Set
 
@@ -105,23 +109,17 @@ A `Submission` stores a user's code attempt alongside a `status` of `PENDING`, `
   </Step>
 
   <Step title="Run the seed script">
-    Execute the seed file directly with Bun (or `npx ts-node` if you prefer):
+    Execute the seed file directly with Bun:
 
     ```bash
     bun prisma/seed-{topic}.ts
-    ```
-
-    You can also use `npx ts-node` if your environment doesn't support Bun's direct TypeScript execution:
-
-    ```bash
-    npx ts-node prisma/seed-{topic}.ts
     ```
 
     The upsert logic means re-running the script is safe — it will update existing records rather than duplicating them.
   </Step>
 
   <Step title="Add the test file for the executor">
-    The test script is what the FastAPI executor service actually runs when a user submits code. Place your test at the path the executor expects inside its Docker container:
+    The test script is what the FastAPI executor service runs when a user submits code. Place your test at the path the executor expects inside its Docker container:
 
     ```
     /app/tests/{problem-slug}.py
@@ -181,7 +179,7 @@ Here is a real example from `prisma/seed-nn.ts`, showing the sigmoid activation 
 - Import any standard libraries the solution will need (typically `numpy as np`)
 - Define the exact function signature specified in the description
 - Include a docstring documenting args and return type
-- End with `raise NotImplementedError` (preferred) or `pass` as the stub body
+- End with `raise NotImplementedError` (preferred) or `pass` as the stub body — both patterns appear in the existing seeds
 
 A minimal example from `prisma/seed-numpy.ts`:
 
@@ -232,9 +230,9 @@ def train(X, y, params, lr=0.01, epochs=1000):
 
 ## Test Code Conventions
 
-The test file is a standalone Python script run inside the executor's Docker sandbox. It imports the user's submitted code as `solution` and uses `assert` statements to verify correctness. When all assertions pass, it prints `"SUCCESS"` to stdout — that signal tells the executor the submission passed.
+The test file is a standalone Python script run inside the executor's Docker sandbox. It is **not** run by the user and does not appear in the editor — the executor service calls it when grading a submission. The file imports the user's submitted code as `solution` and uses `assert` statements to verify correctness. When all assertions pass, it prints `"SUCCESS"` to stdout — that signal tells the executor the submission passed.
 
-Here is a real test from `prisma/seed.ts` (Xavier initialization):
+Here is a real test from `prisma/seed.ts` (Xavier initialization), where the full test is stored directly in the `testCode` field:
 
 ```python
 import numpy as np
@@ -269,7 +267,9 @@ if __name__ == "__main__":
     test()
 ```
 
-Key conventions to follow:
+For problem sets like Attention or Neural Networks from Scratch, the `testCode` field in the seed holds only a reference comment (e.g., `# Tests are executed in the Docker sandbox. See executor test: nn1_sigmoid.py`), and the actual test script lives inside the executor service repository at `/app/tests/{problem-slug}.py`. Both patterns are valid — choose the one that fits your workflow and coordinate with a maintainer if you need access to the executor repository.
+
+Key conventions to follow regardless of which pattern you use:
 - Always import from `solution` (the executor names the user's file `solution.py`)
 - Provide 5–10 test cases covering edge cases (empty arrays, boundary values, dtype checks)
 - Use descriptive assertion messages so users understand what failed

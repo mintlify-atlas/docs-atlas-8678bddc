@@ -1,7 +1,7 @@
 ---
-title: "AI/ML Coding Challenges and Problem Sets"
+title: "Buildml AI/ML Coding Challenges, Problem Sets Guide"
 sidebarTitle: "Challenges"
-description: "Browse curated AI/ML problem sets on Buildml. Each set contains ordered Python challenges from Easy to Hard, covering topics like NumPy and neural networks."
+description: "Browse curated AI/ML problem sets on Buildml. Each set has ordered Python challenges from Easy to Hard, covering NumPy and neural networks."
 ---
 
 Buildml organizes its coding challenges into **problem sets** — curated groups of Python problems that build on each other progressively. Each set covers a specific AI/ML topic (such as NumPy fundamentals, neural networks, or transformer architecture) and guides you from foundational concepts through advanced implementations.
@@ -67,6 +67,10 @@ npx tsx prisma/seed-numpy.ts
 npx tsx prisma/seed-nn.ts
 npx tsx prisma/seed.ts
 ```
+
+## Authentication
+
+All challenge routes under `/practice/:path*` are protected by Next.js middleware. Unauthenticated visitors are redirected to `/signin` before they can view a problem set or attempt a problem. The top-level `/practice` listing page is also covered by this middleware, so a valid session is required to browse challenges at all.
 
 ## Navigating Between Problems
 

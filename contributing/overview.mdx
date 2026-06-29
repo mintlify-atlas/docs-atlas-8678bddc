@@ -1,7 +1,7 @@
 ---
-title: "Contributing to Buildml: Setup and Workflow"
+title: "Contributing to Buildml: Full Setup and Workflow Guide"
 sidebarTitle: "Overview"
-description: "Learn how to contribute to Buildml. Fork the repo, set up your dev environment, follow the code style rules, and submit pull requests against the master branch."
+description: "How to contribute to Buildml — fork the repo, configure your environment, follow code style rules, and submit pull requests against master."
 ---
 
 Buildml is an open contribution project — whether you're fixing a bug, improving performance, or adding a new problem set, your work is welcome. This guide walks you through everything you need to get a local development environment running, follow the project's code style conventions, and submit a clean pull request against the `master` branch.
@@ -13,7 +13,6 @@ Before cloning the repository, make sure you have the following installed and co
 - **[Bun](https://bun.sh)** — used as the package manager and script runner throughout the project
 - **PostgreSQL** — a running database instance for local development
 - **Google OAuth credentials** — a client ID and secret from the [Google Cloud Console](https://console.cloud.google.com/) for NextAuth.js authentication
-- **Node.js** — required alongside Bun for TypeScript tooling compatibility
 
 ## Dev Environment Setup
 
@@ -133,10 +132,11 @@ import { cn } from "~/lib/utils"
 import { useState } from "react"
 
 // 2. Third-party libraries
+import { z } from "zod"
+
+// 3. Local project imports (~/  alias)
 import { Button } from "~/components/ui/button"
 import { api } from "~/trpc/react"
-
-// 3. Local utilities and helpers
 import { cn } from "~/lib/utils"
 
 // 4. Type imports (always last)

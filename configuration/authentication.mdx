@@ -50,7 +50,13 @@ export const authConfig = {
                 token.email = user.email;
                 token.image = user.image;
             }
-            // ...
+            if (!token.sub) return token;
+            const existingUser = await prisma.user.findUnique({
+                where: { id: token.sub },
+            });
+            if (existingUser) {
+                token.image = existingUser.image;
+            }
             return token;
         },
         session: async ({ session, token }) => {
@@ -66,6 +72,14 @@ export const authConfig = {
         strategy: "jwt",
     },
     trustHost: true,
+    events: {
+        createUser: async ({ user }) => {
+            await prisma.user.update({
+                where: { id: user.id },
+                data: { emailVerified: new Date() },
+            });
+        },
+    },
 } satisfies NextAuthConfig;
 ```
 
@@ -75,6 +89,7 @@ export const authConfig = {
 - **PrismaAdapter** — creates `User` and `Account` rows on first sign-in; subsequent sign-ins look up the existing records.
 - **Custom pages** — the sign-in page is at `/signin` and auth errors redirect to `/auth/error`.
 - **`createUser` event** — when a new user is created, `emailVerified` is set immediately to `new Date()` since Google already verifies email addresses.
+- **`jwt` callback** — on every JWT refresh, the callback re-fetches the user's `image` from PostgreSQL to keep the profile photo current if it changes on Google.
 - **`trustHost: true`** — required for deployments behind a reverse proxy (e.g. Vercel) where the `Host` header differs from the canonical origin.
 
 <Warning>
@@ -162,7 +177,7 @@ if (token.exp && now > token.exp) {
 
 ### Server-side (React Server Components, tRPC procedures, Route Handlers)
 
-Import the `auth` helper and call it as an async function:
+Import the `auth` helper from `~/server/auth` and call it as an async function:
 
 ```typescript
 import { auth } from "~/server/auth";

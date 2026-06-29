@@ -1,7 +1,7 @@
 ---
-title: "Buildml tRPC API Reference Overview"
+title: "Buildml tRPC API Overview: Routers, Auth, and Usage"
 sidebarTitle: "Overview"
-description: "Buildml exposes a type-safe tRPC v11 API with five routers: problem, problemSet, submission, user, and feedback. Learn how to call procedures from client and server."
+description: "Buildml exposes a type-safe tRPC v11 API with five routers: problem, problemSet, submission, user, and feedback. Call procedures from client or server."
 ---
 
 Buildml's entire API layer is built on **tRPC v11** — there are no traditional REST endpoints (except for the QStash webhook). Every procedure is fully type-safe end-to-end: your editor knows the exact input and output shape of every call before you ship a single line to production.
@@ -114,8 +114,8 @@ import { api } from "~/trpc/server";
 // Fetch all problem sets (public procedure)
 const problemSets = await api.problemSet.getAll();
 
-// Fetch a single problem by ID
-const problem = await api.problem.getById({ id: "clx..." });
+// Fetch a single problem by slug
+const problem = await api.problem.getBySlug({ slug: "implement-sigmoid" });
 ```
 
 The `HydrateClient` helper exported from the same module lets you prefetch queries and dehydrate them into the React tree for client-side cache hydration.

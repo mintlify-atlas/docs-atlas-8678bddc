@@ -1,5 +1,5 @@
 ---
-title: "Get Started with Buildml in Five Minutes"
+title: "Run Buildml Locally: Clone, Configure, and Launch Dev"
 sidebarTitle: "Quickstart"
 description: "Clone and run Buildml locally with Bun, PostgreSQL, and a FastAPI executor. Get from zero to a working dev environment in five minutes."
 ---
@@ -52,9 +52,11 @@ Make sure the following are installed and available in your `PATH` before you be
     DATABASE_URL="postgresql://postgres:password@localhost:5432/buildml"
 
     # Authentication (NextAuth.js v5)
-    AUTH_SECRET=""                   # Random string — generate with: openssl rand -base64 32
-    GOOGLE_CLIENT_ID=""              # From Google Cloud Console
-    GOOGLE_CLIENT_SECRET=""          # From Google Cloud Console
+    # Note: src/env.js reads this as NEXTAUTH_SECRET (process.env.NEXTAUTH_SECRET).
+    # The .env.example file shows AUTH_SECRET, but the correct variable name is NEXTAUTH_SECRET.
+    NEXTAUTH_SECRET=""              # Random string — generate with: openssl rand -base64 32
+    GOOGLE_CLIENT_ID=""             # From Google Cloud Console
+    GOOGLE_CLIENT_SECRET=""         # From Google Cloud Console
 
     # Upstash Redis (rate limiting + run result cache)
     UPSTASH_REDIS_REST_URL=""
@@ -66,13 +68,14 @@ Make sure the following are installed and available in your `PATH` before you be
     QSTASH_NEXT_SIGNING_KEY=""
 
     # Application URLs
-    DEPLOYMENT_URL="http://localhost:3000"   # Public URL QStash posts callbacks to
-    EXECUTOR_URL="http://localhost:8000"     # FastAPI executor endpoint
-    EXECUTOR_SECRET="dev-secret"            # Shared secret for executor auth
+    # DEPLOYMENT_URL is read from NEXT_PUBLIC_DEPLOYMENT_URL at runtime (see src/env.js).
+    NEXT_PUBLIC_DEPLOYMENT_URL="http://localhost:3000"  # Public URL QStash posts callbacks to
+    EXECUTOR_URL="http://localhost:8000"                # FastAPI executor endpoint (default)
+    EXECUTOR_SECRET="dev-secret"                        # Shared secret for executor auth
     ```
 
     <Note>
-      In `src/env.js` the `DEPLOYMENT_URL` value is read from `NEXT_PUBLIC_DEPLOYMENT_URL` at runtime. Set that variable (not just `DEPLOYMENT_URL`) if you need the value client-side as well. For local development a single `DEPLOYMENT_URL` entry in `.env` is sufficient.
+      `DEPLOYMENT_URL` in `src/env.js` is populated from `process.env.NEXT_PUBLIC_DEPLOYMENT_URL` at runtime. Always set `NEXT_PUBLIC_DEPLOYMENT_URL` in your `.env` file — not a variable named `DEPLOYMENT_URL`.
     </Note>
   </Step>
 
@@ -83,10 +86,10 @@ Make sure the following are installed and available in your `PATH` before you be
     bun run db:push
     ```
 
-    When you are ready to generate versioned migration files (for example, before a production deploy), use `db:migrate` instead:
+    When you are ready to generate versioned migration files (for example, before a production deploy), use `db:generate` instead:
 
     ```bash
-    bun run db:migrate
+    bun run db:generate
     ```
   </Step>
 
@@ -134,6 +137,9 @@ bun run dev
 # Production build
 bun run build
 
+# Start production server
+bun run start
+
 # TypeScript type checking (no emit)
 bun run typecheck
 
@@ -143,11 +149,17 @@ bun run check
 # Auto-fix linting and formatting
 bun run check:write
 
+# Auto-fix with unsafe transformations
+bun run check:unsafe
+
 # Push schema changes to the database (no migration file)
 bun run db:push
 
-# Create a versioned migration file
+# Create a versioned migration (production changes)
 bun run db:migrate
+
+# Run migrations and regenerate Prisma client
+bun run db:generate
 
 # Open Prisma Studio GUI
 bun run db:studio

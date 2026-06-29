@@ -1,7 +1,7 @@
 ---
-title: "submission Router: Run and Submit Code"
-sidebarTitle: "submission"
-description: "The submission tRPC router provides run, submit, and getStatus procedures. All require authentication. Run executes code without saving; submit persists results."
+title: "submission Router — Run, Submit, and Poll Code Results"
+sidebarTitle: "Submission"
+description: "The submission tRPC router provides run, submit, and getStatus procedures. All three require authentication. Run tests code; submit persists results."
 ---
 
 The `submissionRouter` handles code execution and grading for Buildml problems. All three procedures require an authenticated session. Execution is asynchronous — both `run` and `submit` dispatch a job to [QStash](https://upstash.com/docs/qstash/overall/getstarted) and return immediately. You then poll `getStatus` until the job finishes. Rate limits are enforced per user via Upstash Redis to prevent abuse.

@@ -1,7 +1,7 @@
 ---
-title: "Deploy Buildml on Your Own Infrastructure"
+title: "Self-Host Buildml: Production Setup and Config Guide"
 sidebarTitle: "Self-Hosting"
-description: "Run Buildml in production with PostgreSQL, Upstash Redis, Upstash QStash, Google OAuth, and a FastAPI executor service. Full environment variable reference."
+description: "Run Buildml in production with PostgreSQL, Upstash Redis, QStash, Google OAuth, and a FastAPI executor. Full environment variable reference."
 ---
 
 Buildml is designed to run on standard cloud infrastructure. The Next.js application can be deployed to Vercel or any Node.js-capable host, while the FastAPI executor runs as an isolated Docker service. This page covers every required external service, the full environment variable reference, and a production readiness checklist.
@@ -88,6 +88,8 @@ Set `EXECUTOR_SECRET` to a strong random string and ensure the executor validate
 
 ## Environment Variable Reference
 
+All variables are validated at startup by `@t3-oss/env-nextjs` (via `src/env.js`). A missing or malformed required variable will produce a clear startup error rather than a silent runtime failure. Import and use `env` from `~/env.js` in application code — never access `process.env` directly.
+
 <ParamField body="DATABASE_URL" type="string" required>
   Full PostgreSQL connection string. Prisma uses this to connect via `@prisma/adapter-pg`.
 
@@ -96,8 +98,12 @@ Set `EXECUTOR_SECRET` to a strong random string and ensure the executor validate
   ```
 </ParamField>
 
-<ParamField body="AUTH_SECRET" type="string" required>
-  Random secret string used by NextAuth.js v5 to sign session tokens and cookies. In `src/env.js` this is read as `NEXTAUTH_SECRET`. **Required in production** — omitting it will cause a startup error.
+<ParamField body="NEXTAUTH_SECRET" type="string" required>
+  Random secret string used by NextAuth.js v5 to sign session tokens and cookies. In `src/env.js` this variable is named `NEXTAUTH_SECRET` and is read from `process.env.NEXTAUTH_SECRET`. **Required in production** — omitting it will cause a startup error.
+
+  <Note>
+    The `.env.example` file in the repository shows this variable as `AUTH_SECRET`, but the application code (`src/env.js`, `src/server/auth/config.ts`, `src/middleware.ts`) reads `process.env.NEXTAUTH_SECRET`. Set the variable as `NEXTAUTH_SECRET` in your environment.
+  </Note>
 
   Generate a secure value with:
   ```bash
@@ -137,14 +143,12 @@ Set `EXECUTOR_SECRET` to a strong random string and ensure the executor validate
   QStash webhook signing key (next). QStash rotates signing keys; providing both the current and next key ensures zero-downtime key rotation without dropped webhooks.
 </ParamField>
 
-<ParamField body="DEPLOYMENT_URL" type="string" required>
-  The fully-qualified public URL of your Next.js application. QStash uses this to construct the callback URL when delivering webhook messages.
+<ParamField body="NEXT_PUBLIC_DEPLOYMENT_URL" type="string" required>
+  The fully-qualified public URL of your Next.js application. In `src/env.js`, the internal `DEPLOYMENT_URL` variable is populated from `process.env.NEXT_PUBLIC_DEPLOYMENT_URL`. QStash uses this value to construct the webhook callback URL.
 
   ```
-  DEPLOYMENT_URL="https://buildml.yourdomain.com"
+  NEXT_PUBLIC_DEPLOYMENT_URL="https://buildml.yourdomain.com"
   ```
-
-  Note: in `src/env.js` this is mapped from `NEXT_PUBLIC_DEPLOYMENT_URL` at runtime.
 </ParamField>
 
 <ParamField body="EXECUTOR_URL" type="string" default="http://localhost:8000">
@@ -159,6 +163,18 @@ Set `EXECUTOR_SECRET` to a strong random string and ensure the executor validate
   Shared secret sent with every request from the Next.js webhook handler to the executor. The executor must validate this value on each request. **Change the default `dev-secret` value before deploying to production.**
 </ParamField>
 
+<ParamField body="NODE_ENV" type="string" default="development">
+  Node environment. Set to `production` in production deployments. When `NODE_ENV` is `production`, `NEXTAUTH_SECRET` becomes strictly required (it is optional in development).
+</ParamField>
+
+<ParamField body="SKIP_ENV_VALIDATION" type="string">
+  Set to `true` to skip Zod validation of environment variables at build time. Useful for Docker builds and CI pipelines that run `next build` without a live database or secrets available.
+
+  ```bash
+  SKIP_ENV_VALIDATION=true bun run build
+  ```
+</ParamField>
+
 ## Production Checklist
 
 <Steps>
@@ -167,7 +183,7 @@ Set `EXECUTOR_SECRET` to a strong random string and ensure the executor validate
   </Step>
 
   <Step title="Set all environment variables">
-    Copy `.env.example` to your deployment environment (Vercel environment settings, Docker secrets, etc.) and fill in every variable listed above. Do not leave any field blank in production.
+    Configure every variable listed above in your deployment environment (Vercel environment settings, Docker secrets, etc.). Do not leave any required field blank in production. Remember to use `NEXTAUTH_SECRET` (not `AUTH_SECRET`) and `NEXT_PUBLIC_DEPLOYMENT_URL` (not `DEPLOYMENT_URL`).
   </Step>
 
   <Step title="Set a strong EXECUTOR_SECRET">
@@ -181,16 +197,16 @@ Set `EXECUTOR_SECRET` to a strong random string and ensure the executor validate
   </Step>
 
   <Step title="Run database migrations">
-    Apply the Prisma schema to your production PostgreSQL instance using a proper migration (not `db:push`):
+    Apply the Prisma schema to your production PostgreSQL instance. Use `db:generate` to create and apply a versioned migration (runs `prisma migrate dev`) rather than `db:push`, which is for local prototyping only:
+
+    ```bash
+    bun run db:generate
+    ```
+
+    Alternatively, to create a migration file without applying it (for review before deploy), use:
 
     ```bash
     bun run db:migrate
-    ```
-
-    Then generate the Prisma client:
-
-    ```bash
-    bun prisma generate
     ```
   </Step>
 
@@ -218,7 +234,7 @@ Set `EXECUTOR_SECRET` to a strong random string and ensure the executor validate
     https://your-domain.com/api/webhooks/process-submission/
     ```
 
-    This URL must match the value derived from `DEPLOYMENT_URL` in your environment.
+    This URL must match the value derived from `NEXT_PUBLIC_DEPLOYMENT_URL` in your environment.
   </Step>
 
   <Step title="Verify end-to-end execution">
@@ -227,5 +243,5 @@ Set `EXECUTOR_SECRET` to a strong random string and ensure the executor validate
 </Steps>
 
 <Warning>
-  Protected routes (`/dashboard/*`, `/practice/*`, `/leaderboard`, `/profile/*`) are enforced by Next.js middleware. Ensure `AUTH_SECRET` is set correctly — an incorrect or missing value will silently break session validation and redirect authenticated users back to the sign-in page.
+  Protected routes (`/dashboard/*`, `/practice/*`, `/leaderboard`, `/profile/*`) are enforced by Next.js middleware. Ensure `NEXTAUTH_SECRET` is set correctly — an incorrect or missing value will silently break session validation and redirect authenticated users back to the sign-in page.
 </Warning>

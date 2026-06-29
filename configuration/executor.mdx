@@ -152,10 +152,10 @@ Next.js Webhook (stores result)
 
 ### Step 1 — tRPC mutation dispatches to QStash
 
-When a user clicks **Run** or **Submit**, the tRPC procedure in `src/server/api/routers/submission.ts` publishes a message to QStash:
+When a user clicks **Run** or **Submit**, the tRPC procedure in `src/server/api/routers/submission.ts` publishes a message to QStash. Both `RUN` and `SUBMIT` types go through QStash — the difference is that `RUN` creates no database record (results are stored temporarily in Redis), while `SUBMIT` first creates a `Submission` row with `status: "PENDING"` before queuing:
 
 ```typescript src/server/api/routers/submission.ts
-// RUN: immediate code check (no DB record created)
+// RUN: no DB record created; result stored in Redis by the webhook (TTL: 600 s)
 await qstash.publishJSON({
     url: `${env.DEPLOYMENT_URL}/api/webhooks/process-submission`,
     body: {
