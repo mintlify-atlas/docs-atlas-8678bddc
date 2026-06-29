@@ -1,0 +1,198 @@
+---
+title: "Contributing to Buildml: Setup and Workflow"
+sidebarTitle: "Overview"
+description: "Learn how to contribute to Buildml. Fork the repo, set up your dev environment, follow the code style rules, and submit pull requests against the master branch."
+---
+
+Buildml is an open contribution project — whether you're fixing a bug, improving performance, or adding a new problem set, your work is welcome. This guide walks you through everything you need to get a local development environment running, follow the project's code style conventions, and submit a clean pull request against the `master` branch.
+
+## Prerequisites
+
+Before cloning the repository, make sure you have the following installed and configured on your machine:
+
+- **[Bun](https://bun.sh)** — used as the package manager and script runner throughout the project
+- **PostgreSQL** — a running database instance for local development
+- **Google OAuth credentials** — a client ID and secret from the [Google Cloud Console](https://console.cloud.google.com/) for NextAuth.js authentication
+- **Node.js** — required alongside Bun for TypeScript tooling compatibility
+
+## Dev Environment Setup
+
+<Steps>
+  <Step title="Fork the repository on GitHub">
+    Navigate to [github.com/Praashh/buildml](https://github.com/Praashh/buildml) and click **Fork** to create your own copy under your GitHub account.
+  </Step>
+
+  <Step title="Clone your fork">
+    ```bash
+    git clone https://github.com/<your-username>/buildml.git
+    cd buildml
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    bun install
+    ```
+  </Step>
+
+  <Step title="Configure your environment">
+    Copy the example env file and fill in every required value before proceeding:
+
+    ```bash
+    cp .env.example .env
+    ```
+
+    The required server-side variables are: `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `QSTASH_*` keys, `DEPLOYMENT_URL`, `EXECUTOR_URL`, and `EXECUTOR_SECRET`. All variables are validated at startup via `@t3-oss/env-nextjs` — always access them through `env.VAR_NAME` imported from `~/env.js` rather than reading `process.env` directly.
+  </Step>
+
+  <Step title="Push the database schema">
+    ```bash
+    bun run db:push
+    ```
+
+    This pushes the Prisma schema (`prisma/schema.prisma`) directly to your local PostgreSQL database without creating a migration file, which is the recommended approach during prototyping. For production schema changes use `bun run db:migrate` instead.
+  </Step>
+
+  <Step title="Start the development server">
+    ```bash
+    bun run dev
+    ```
+
+    This starts Next.js in Turbo mode (`next dev --turbo`). The application will be available at `http://localhost:3000`.
+  </Step>
+</Steps>
+
+## Branch Workflow
+
+All contributions branch off `master`. Create a descriptively named branch for every change you make — one feature or fix per branch keeps pull requests focused and easy to review.
+
+```bash
+git checkout -b feat/add-numpy-broadcasting-problem
+# or
+git checkout -b fix/submission-polling-timeout
+```
+
+Open your pull request against the `master` branch when you're ready.
+
+## Pre-Commit Checklist
+
+Run both checks before every commit. Neither should produce errors or warnings before you push.
+
+```bash
+bun run check        # Biome lint + format check
+bun run typecheck    # TypeScript validation
+```
+
+If `bun run check` reports fixable issues, you can auto-apply safe fixes with:
+
+```bash
+bun run check:write
+```
+
+For more aggressive (unsafe) transformations:
+
+```bash
+bun run check:unsafe
+```
+
+## Code Style Rules
+
+Buildml enforces a consistent code style through Biome and TypeScript strict mode. The key rules to follow are listed below.
+
+**Formatting and linting** are handled entirely by [Biome](https://biomejs.dev/) (`biome.jsonc`). Biome replaces both ESLint and Prettier. It enforces sorted Tailwind classes via the `useSortedClasses` nursery rule (applied to `clsx`, `cva`, and `cn` calls), and organises imports automatically.
+
+**Path alias** — the `~/` alias maps to `./src/`. Always use it for imports from the `src/` directory:
+
+```typescript
+import { cn } from "~/lib/utils"
+import { api } from "~/trpc/react"
+import type { User } from "~/db/schema"
+```
+
+**Conditional Tailwind classes** — use the `cn()` utility (clsx + tailwind-merge) for all conditional or merged class strings. Never concatenate class strings manually:
+
+```typescript
+import { cn } from "~/lib/utils"
+
+<div className={cn("base-class", isActive && "active-class", className)} />
+```
+
+**Naming conventions:**
+
+| Kind | Convention | Example |
+|---|---|---|
+| Components & types | PascalCase | `UserProfile`, `SubmissionStatus` |
+| Functions & variables | camelCase | `handleSubmit`, `problemSlug` |
+| File names | kebab-case | `problem-card.tsx`, `use-submission.ts` |
+| Constants | SCREAMING_SNAKE_CASE | `MAX_RETRY_COUNT` |
+
+**Import order** — group imports into four categories separated by blank lines, in this order:
+
+```typescript
+// 1. External (React, Node built-ins)
+import { useState } from "react"
+
+// 2. Third-party libraries
+import { Button } from "~/components/ui/button"
+import { api } from "~/trpc/react"
+
+// 3. Local utilities and helpers
+import { cn } from "~/lib/utils"
+
+// 4. Type imports (always last)
+import type { Problem } from "~/db/schema"
+```
+
+Prefer named imports over default imports throughout.
+
+**TypeScript** — the project runs in strict mode with `noUncheckedIndexedAccess` enabled. Avoid `any`, always type function return values when they aren't obvious from inference, and use `TRPCError` for API-layer errors.
+
+## Commit Messages
+
+Buildml follows the [Conventional Commits](https://www.conventionalcommits.org/) specification. Every commit message must start with a type prefix:
+
+```
+feat: add new problem set page
+fix: resolve submission polling timeout
+refactor: simplify rate limiter logic
+docs: update README badges
+chore: bump Biome to latest
+```
+
+Common types: `feat`, `fix`, `refactor`, `docs`, `chore`, `test`, `style`, `perf`.
+
+## Pull Request Guidelines
+
+- **One feature or fix per PR** — keep the diff focused so reviewers can give meaningful feedback
+- **Clear description** — explain what changed, why, and any relevant implementation decisions
+- **Passing checks** — `bun run check` and `bun run typecheck` must both pass before requesting review
+- **Link related issues** — reference any open issues your PR addresses using `Closes #123` in the description
+- If your PR changes the database schema, include the output of `bun run db:migrate` and note any migration concerns
+
+## Reporting Bugs
+
+Open a GitHub issue and include:
+
+- **Steps to reproduce** — a minimal, numbered sequence of actions that triggers the bug
+- **Expected vs actual behavior** — what you expected to happen and what actually happened
+- **Browser and OS** — relevant for any UI-layer issues (e.g., Chrome 125 on macOS Sonoma)
+- **Error output** — paste any console errors, stack traces, or network responses in full
+
+---
+
+<CardGroup cols={2}>
+  <Card
+    title="Adding Problems"
+    icon="code"
+    href="/contributing/adding-problems"
+  >
+    Learn how to create new AI/ML problem sets and individual problems, write seed scripts, and supply test files for the executor.
+  </Card>
+  <Card
+    title="Database Configuration"
+    icon="database"
+    href="/configuration/database"
+  >
+    Understand the Prisma schema, how to run migrations, and how to use Prisma Studio to inspect your local database.
+  </Card>
+</CardGroup>

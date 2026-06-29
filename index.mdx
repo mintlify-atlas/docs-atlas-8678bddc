@@ -1,20 +1,75 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "Buildml: Master AI/ML Through Hands-On Challenges"
+sidebarTitle: "Home"
+description: "Buildml is an interactive AI/ML learning platform. Solve coding challenges, run Python code in-browser, and track your progress on the leaderboard."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+Buildml is a full-stack platform for developers who want to master AI and machine learning by building. Instead of passive reading, you write real Python implementations — from numpy operations to neural networks — and get immediate feedback from an automated test suite.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="circle-info" href="/introduction">
+    Learn what Buildml is, how it works, and what you can build with it.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get the platform running locally in under five minutes.
+  </Card>
+  <Card title="Core Features" icon="layer-group" href="/features/challenges">
+    Explore challenges, the code editor, submissions, leaderboard, and profiles.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Full tRPC router documentation with parameters and return types.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## How It Works
+
+<Steps>
+  <Step title="Browse Problem Sets">
+    Navigate to `/practice` to find curated sets like NumPy Fundamentals or Neural Networks. Each set contains problems ordered by difficulty.
+  </Step>
+  <Step title="Write Your Solution">
+    Open a problem to get a description (with math rendered via KaTeX), a Python template, and a Monaco editor. Write your implementation in the browser.
+  </Step>
+  <Step title="Run & Submit">
+    Hit **Run** to test your code instantly against sample tests. When you're confident, hit **Submit** — your solution is queued, executed in an isolated container, and results are stored permanently.
+  </Step>
+  <Step title="Track Your Progress">
+    Check your **Profile** for a submission heatmap and difficulty breakdown. Compete with others on the **Leaderboard** ranked by unique problems solved.
+  </Step>
+</Steps>
+
+## Key Features
+
+<CardGroup cols={3}>
+  <Card title="Curated Problem Sets" icon="books">
+    Challenges grouped by topic — NumPy, neural networks, and more — ordered from Easy to Hard.
+  </Card>
+  <Card title="Monaco Code Editor" icon="pen-to-square">
+    Full-featured in-browser Python editor with syntax highlighting and resizable panels.
+  </Card>
+  <Card title="Async Execution" icon="bolt">
+    Code runs in an isolated FastAPI executor via Upstash QStash — safe, rate-limited, and fast.
+  </Card>
+  <Card title="Real-Time Results" icon="terminal">
+    The console panel polls for results every second and displays pass/fail output per test.
+  </Card>
+  <Card title="Leaderboard" icon="trophy">
+    Community rankings updated in real time based on unique solved problems.
+  </Card>
+  <Card title="Activity Heatmap" icon="chart-bar">
+    Your profile tracks daily submission history and solved counts by difficulty.
+  </Card>
+</CardGroup>
+
+## Tech Stack
+
+Buildml is built on the [T3 Stack](https://create.t3.gg/) — a production-ready combination of Next.js, TypeScript, Prisma, tRPC, and NextAuth.js — deployed on Vercel with PostgreSQL and Upstash for persistence and queuing.
+
+<CardGroup cols={2}>
+  <Card title="Self-Hosting Guide" icon="server" href="/self-hosting">
+    Deploy Buildml on your own infrastructure with Docker and Postgres.
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/contributing/overview">
+    Learn how to add new problem sets and problems to the platform.
+  </Card>
+</CardGroup>

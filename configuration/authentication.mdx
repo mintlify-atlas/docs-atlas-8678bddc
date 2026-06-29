@@ -1,0 +1,216 @@
+---
+title: "Authentication Setup with Google OAuth"
+sidebarTitle: "Authentication"
+description: "Buildml uses NextAuth.js v5 with Google OAuth and a Prisma session adapter. Configure your Google Cloud credentials and understand which routes are protected."
+---
+
+Buildml delegates all authentication to [NextAuth.js v5](https://authjs.dev) using Google as the sole OAuth provider. Sessions are stored as signed JWTs (not database rows), while account and user records are persisted to PostgreSQL via the Prisma adapter. The configuration lives in `src/server/auth/config.ts` and is consumed by the Next.js API route handler and the Edge middleware.
+
+---
+
+## Configuration File
+
+The full NextAuth.js configuration is exported from `src/server/auth/config.ts`:
+
+```typescript src/server/auth/config.ts
+import { PrismaAdapter } from "@auth/prisma-adapter";
+import type { DefaultSession, NextAuthConfig } from "next-auth";
+import GoogleProvider from "next-auth/providers/google";
+import { prisma } from "~/db";
+import { env } from "~/env";
+
+declare module "next-auth" {
+    interface Session extends DefaultSession {
+        user: {
+            id: string;
+            name: string;
+            email: string;
+            image: string;
+        } & DefaultSession["user"];
+    }
+}
+
+export const authConfig = {
+    providers: [
+        GoogleProvider({
+            clientId: env.GOOGLE_CLIENT_ID,
+            clientSecret: env.GOOGLE_CLIENT_SECRET,
+        }),
+    ],
+    adapter: PrismaAdapter(prisma),
+    secret: env.NEXTAUTH_SECRET,
+    pages: {
+        signIn: "/signin",
+        error: "/auth/error",
+    },
+    callbacks: {
+        jwt: async ({ token, user }) => {
+            if (user) {
+                token.id = user.id;
+                token.email = user.email;
+                token.image = user.image;
+            }
+            // ...
+            return token;
+        },
+        session: async ({ session, token }) => {
+            if (token) {
+                session.user.id = token.id as string;
+                session.user.email = token.email as string;
+                session.user.image = token.image as string;
+            }
+            return session;
+        },
+    },
+    session: {
+        strategy: "jwt",
+    },
+    trustHost: true,
+} satisfies NextAuthConfig;
+```
+
+### Key design decisions
+
+- **JWT session strategy** — `session.strategy: "jwt"` means sessions are stored entirely in a signed cookie, not in a `Session` table row. The `Session` model in Prisma is still created by the Prisma adapter but is not the primary session mechanism.
+- **PrismaAdapter** — creates `User` and `Account` rows on first sign-in; subsequent sign-ins look up the existing records.
+- **Custom pages** — the sign-in page is at `/signin` and auth errors redirect to `/auth/error`.
+- **`createUser` event** — when a new user is created, `emailVerified` is set immediately to `new Date()` since Google already verifies email addresses.
+- **`trustHost: true`** — required for deployments behind a reverse proxy (e.g. Vercel) where the `Host` header differs from the canonical origin.
+
+<Warning>
+  `NEXTAUTH_SECRET` is **required in production** — the Zod schema in `src/env.js` enforces `z.string()` when `NODE_ENV === "production"`. Without it, NextAuth.js cannot sign or verify JWT tokens and the app will refuse to start. Generate a value with `openssl rand -base64 32`.
+</Warning>
+
+---
+
+## Setting Up Google OAuth
+
+<Steps>
+  <Step title="Open Google Cloud Console">
+    Navigate to [https://console.cloud.google.com](https://console.cloud.google.com) and select (or create) the project you want to use for Buildml.
+  </Step>
+  <Step title="Enable the Google Identity API">
+    Go to **APIs & Services → Library**, search for **"Google Identity"** or **"OAuth"**, and enable the **Google+ API** (or the relevant identity service for your project).
+  </Step>
+  <Step title="Create OAuth 2.0 Credentials">
+    Navigate to **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**.
+
+    - **Application type:** Web application
+    - **Name:** e.g. `Buildml`
+    - **Authorised JavaScript origins:** your deployment URL, e.g. `https://buildml.vercel.app`
+    - **Authorised redirect URIs:** append `/api/auth/callback/google` to your deployment URL:
+
+    ```
+    https://buildml.vercel.app/api/auth/callback/google
+    ```
+
+    For local development, also add:
+
+    ```
+    http://localhost:3000/api/auth/callback/google
+    ```
+  </Step>
+  <Step title="Copy credentials to .env">
+    After saving, Google displays a **Client ID** and **Client Secret**. Add them to your `.env` file:
+
+    ```bash .env
+    GOOGLE_CLIENT_ID="123456789012-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+    GOOGLE_CLIENT_SECRET="GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    ```
+  </Step>
+  <Step title="Configure the OAuth Consent Screen">
+    In **APIs & Services → OAuth consent screen**, set the app name, support email, and authorised domains. While in testing mode, add your Google account as a **Test user** so you can sign in before the app is published.
+  </Step>
+</Steps>
+
+---
+
+## Protected Routes
+
+Route protection is enforced by the Edge middleware in `src/middleware.ts`. The middleware uses `getToken` from `next-auth/jwt` to verify the JWT cookie on every matching request — no database round-trip required.
+
+```typescript src/middleware.ts
+export const config = {
+    matcher: [
+        "/dashboard/:path*",
+        "/practice/:path*",
+        "/leaderboard",
+        "/profile/:path*",
+    ],
+};
+```
+
+Any request to a matched path without a valid, non-expired JWT is **redirected to `/signin`**. Expired tokens are also caught:
+
+```typescript src/middleware.ts
+const now = Date.now() / 1000;
+if (token.exp && now > token.exp) {
+    return NextResponse.redirect(new URL("/signin", req.url));
+}
+```
+
+| Protected path | Description |
+|---|---|
+| `/dashboard/*` | User dashboard and overview pages |
+| `/practice/*` | Individual problem pages and the code editor |
+| `/leaderboard` | Global rankings page |
+| `/profile/*` | User profile and submission history |
+
+---
+
+## Accessing the Session
+
+### Server-side (React Server Components, tRPC procedures, Route Handlers)
+
+Import the `auth` helper and call it as an async function:
+
+```typescript
+import { auth } from "~/server/auth";
+
+const session = await auth();
+
+if (!session) {
+    // user is not authenticated
+}
+
+console.log(session.user.id);    // string (CUID)
+console.log(session.user.email); // string
+console.log(session.user.image); // string (Google profile photo URL)
+```
+
+### Client-side (React Client Components)
+
+Wrap your component tree with `<SessionProvider>` (typically in the root layout), then use the `useSession` hook:
+
+```tsx
+"use client";
+import { useSession } from "next-auth/react";
+
+export function UserAvatar() {
+    const { data: session, status } = useSession();
+
+    if (status === "loading") return <Spinner />;
+    if (!session) return null;
+
+    return <img src={session.user.image} alt={session.user.name} />;
+}
+```
+
+### tRPC Protected Procedures
+
+Server-side tRPC procedures that require authentication use the `protectedProcedure` builder. It reads `ctx.session` and throws a `UNAUTHORIZED` TRPCError if the session is absent:
+
+```typescript
+import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
+
+export const exampleRouter = createTRPCRouter({
+    sensitiveAction: protectedProcedure
+        .mutation(({ ctx }) => {
+            // ctx.session is guaranteed to be non-null here
+            const userId = ctx.session.user.id;
+            // ...
+        }),
+});
+```
+
+Calling a `protectedProcedure` from an unauthenticated client surfaces as a `UNAUTHORIZED` error in the tRPC response.

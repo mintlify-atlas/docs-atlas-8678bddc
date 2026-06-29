@@ -1,0 +1,249 @@
+---
+title: "user Router: Profiles and Leaderboard"
+sidebarTitle: "user"
+description: "The user tRPC router exposes getAllUsers, getLeaderboard, getUserRank, and getProfile procedures for community stats and personal progress tracking."
+---
+
+The `userRouter` provides four procedures for community statistics, competitive ranking, and personal progress data. `getAllUsers`, `getLeaderboard`, and `getProfile` are public and can be called without authentication. `getUserRank` requires an active session to identify which user's rank to compute.
+
+All leaderboard and rank calculations derive `solvedCount` from distinct `problemId`s with `status = "PASS"` — a user who submits the same problem multiple times is only counted once.
+
+---
+
+## `user.getAllUsers`
+
+Returns the total number of registered users on the platform. Useful for social proof displays ("Join 1,200 developers solving ML challenges").
+
+**Type:** query — **Auth:** public
+
+**Input:** none
+
+<CodeGroup>
+
+```typescript Server Component
+import { api } from '~/trpc/server';
+
+const count = await api.user.getAllUsers();
+// count => number, e.g. 1234
+```
+
+```typescript Client Component
+'use client';
+import { api } from '~/trpc/react';
+
+const { data: count } = api.user.getAllUsers.useQuery();
+```
+
+</CodeGroup>
+
+### Response
+
+<ResponseField name="(return value)" type="number" required>
+  Total count of `User` rows in the database, as returned by Prisma's `user.count()`.
+</ResponseField>
+
+---
+
+## `user.getLeaderboard`
+
+Returns all users ranked by the number of unique problems they have solved with a `PASS` status, sorted descending. Anonymous users (no name set) are displayed as `"Anonymous"`.
+
+**Type:** query — **Auth:** public
+
+**Input:** none
+
+<CodeGroup>
+
+```typescript Server Component
+import { api } from '~/trpc/server';
+
+const leaderboard = await api.user.getLeaderboard();
+// leaderboard[0] => top-ranked user
+```
+
+```typescript Client Component
+'use client';
+import { api } from '~/trpc/react';
+
+const { data: leaderboard } = api.user.getLeaderboard.useQuery();
+```
+
+</CodeGroup>
+
+### Response
+
+An array of user rank objects, sorted by `solvedCount` descending:
+
+<ResponseField name="id" type="string" required>
+  Unique CUID identifier of the user.
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Display name of the user. Falls back to `"Anonymous"` if the user has no name set.
+</ResponseField>
+
+<ResponseField name="image" type="string | null">
+  URL of the user's profile/avatar image. `null` if not set.
+</ResponseField>
+
+<ResponseField name="solvedCount" type="number" required>
+  Count of distinct problems the user has solved with `status = "PASS"`. Duplicates across multiple passing submissions for the same problem are collapsed.
+</ResponseField>
+
+---
+
+## `user.getUserRank`
+
+Returns the 1-based leaderboard rank of the currently authenticated user. Rank is determined by sorting all users by `solvedCount` descending and finding the authenticated user's position.
+
+**Type:** query — **Auth:** protected (session required)
+
+**Input:** none
+
+<CodeGroup>
+
+```typescript Server Component
+import { api } from '~/trpc/server';
+
+const rank = await api.user.getUserRank();
+// rank => 7  (user is 7th on the leaderboard)
+// rank => null  (user has no passing submissions yet)
+```
+
+```typescript Client Component
+'use client';
+import { api } from '~/trpc/react';
+
+const { data: rank } = api.user.getUserRank.useQuery();
+```
+
+</CodeGroup>
+
+### Response
+
+<ResponseField name="(return value)" type="number | null" required>
+  The authenticated user's 1-based leaderboard position, or `null` if the user is not found in the ranked list (e.g., they have no passing submissions).
+</ResponseField>
+
+---
+
+## `user.getProfile`
+
+Fetches a detailed profile for any user, including per-difficulty solved counts, total available problems per difficulty, overall solved count, and a daily submission activity history map. If `userId` is omitted, the current session user's profile is returned.
+
+**Type:** query — **Auth:** public
+
+**Input:** `{ userId?: string }`
+
+<ParamField query="userId" type="string">
+  The CUID of the user whose profile to fetch. If omitted, the procedure falls back to `ctx.session?.user?.id`. Returns `null` if neither is available.
+</ParamField>
+
+<CodeGroup>
+
+```typescript Server Component
+import { api } from '~/trpc/server';
+
+// Fetch own profile (requires active session)
+const profile = await api.user.getProfile({});
+
+// Fetch another user's profile by ID
+const profile = await api.user.getProfile({ userId: 'clxyz123...' });
+
+if (!profile) {
+  // user not found or no session
+}
+```
+
+```typescript Client Component
+'use client';
+import { api } from '~/trpc/react';
+
+// Fetch own profile
+const { data: profile } = api.user.getProfile.useQuery({});
+
+// Fetch by userId
+const { data: profile } = api.user.getProfile.useQuery({
+  userId: 'clxyz123...',
+});
+```
+
+</CodeGroup>
+
+### Response
+
+Returns `null` if the resolved `userId` is not found. Otherwise returns:
+
+<ResponseField name="user" type="object" required>
+  Basic identity fields for the profile owner.
+
+  <Expandable title="user fields">
+    <ResponseField name="user.id" type="string" required>
+      Unique CUID identifier of the user.
+    </ResponseField>
+
+    <ResponseField name="user.name" type="string | null">
+      Display name. `null` if the user has not set a name.
+    </ResponseField>
+
+    <ResponseField name="user.image" type="string | null">
+      Profile image URL. `null` if not set.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="difficultyCounts" type="object" required>
+  Number of **unique** problems the user has solved at each difficulty level. A problem is counted once regardless of how many passing submissions exist for it.
+
+  <Expandable title="difficultyCounts fields">
+    <ResponseField name="difficultyCounts.Easy" type="number" required>
+      Unique Easy problems solved.
+    </ResponseField>
+
+    <ResponseField name="difficultyCounts.Medium" type="number" required>
+      Unique Medium problems solved.
+    </ResponseField>
+
+    <ResponseField name="difficultyCounts.Hard" type="number" required>
+      Unique Hard problems solved.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="totalCounts" type="object" required>
+  Total number of problems available on the platform at each difficulty level, derived from `prisma.problem.groupBy`. Used to render progress bars (e.g., "3 / 10 Easy solved").
+
+  <Expandable title="totalCounts fields">
+    <ResponseField name="totalCounts.Easy" type="number" required>
+      Total Easy problems available.
+    </ResponseField>
+
+    <ResponseField name="totalCounts.Medium" type="number" required>
+      Total Medium problems available.
+    </ResponseField>
+
+    <ResponseField name="totalCounts.Hard" type="number" required>
+      Total Hard problems available.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="solvedCount" type="number" required>
+  Total number of unique problems the user has solved across all difficulty levels (`Easy + Medium + Hard`).
+</ResponseField>
+
+<ResponseField name="history" type="Record<string, number>" required>
+  A map of `YYYY-MM-DD` date strings to the number of passing submissions made on that day. Used to render activity heatmap / contribution graphs.
+
+  ```json
+  {
+    "2024-11-01": 3,
+    "2024-11-04": 1,
+    "2024-11-10": 5
+  }
+  ```
+</ResponseField>
+
+<Tip>
+  When `userId` is omitted and there is no active session, `getProfile` returns `null` rather than throwing. Always guard the result before rendering profile UI.
+</Tip>

@@ -1,0 +1,174 @@
+---
+title: "Environment Variables Reference for Buildml"
+sidebarTitle: "Environment Variables"
+description: "Complete reference for all Buildml environment variables. Covers database, auth, Redis, QStash, executor, and deployment settings validated via @t3-oss/env-nextjs."
+---
+
+Buildml validates every environment variable at application startup using [`@t3-oss/env-nextjs`](https://env.t3.gg). The schema is defined in `src/env.js` and uses [Zod](https://zod.dev) for runtime type-checking. If a required variable is missing or malformed, the process will throw and refuse to start — there are no silent failures.
+
+<Warning>
+  All environment variables listed here are validated at startup via `@t3-oss/env-nextjs`. A missing or invalid required variable will **crash the application immediately** at boot time — both in development and production. Fix the issue in your `.env` file and restart the server.
+</Warning>
+
+<Tip>
+  Always import configuration values from `~/env` (i.e. `import { env } from "~/env"`), never from `process.env` directly. The `env` object is fully typed and validated, whereas `process.env` values are untyped strings that bypass the Zod schema entirely.
+</Tip>
+
+---
+
+## Database
+
+<ParamField path="DATABASE_URL" type="string" required>
+  PostgreSQL connection string used by Prisma and the `@prisma/adapter-pg` driver. Must be a valid URL.
+
+  **Format:** `postgresql://user:password@host:5432/dbname`
+
+  **Example:** `postgresql://postgres:password@localhost:5432/buildml`
+</ParamField>
+
+---
+
+## Authentication
+
+<ParamField path="NEXTAUTH_SECRET" type="string">
+  Random secret used by NextAuth.js v5 to sign and verify JWT session tokens. Also read via the `AUTH_SECRET` alias.
+
+  - **Required in production** — the Zod schema enforces `z.string()` when `NODE_ENV === "production"`.
+  - **Optional in development** — treated as `z.string().optional()` so local runs work without it.
+
+  Generate a secure value with:
+
+  ```bash
+  openssl rand -base64 32
+  ```
+</ParamField>
+
+<ParamField path="GOOGLE_CLIENT_ID" type="string" required>
+  OAuth 2.0 client ID for the Google provider. Obtained from the Google Cloud Console under **APIs & Services → Credentials**.
+
+  **Example:** `123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com`
+</ParamField>
+
+<ParamField path="GOOGLE_CLIENT_SECRET" type="string" required>
+  OAuth 2.0 client secret paired with `GOOGLE_CLIENT_ID`. Keep this value private and never commit it to version control.
+</ParamField>
+
+---
+
+## Upstash Redis
+
+Buildml uses [Upstash Redis](https://upstash.com/redis) for rate limiting (via `@upstash/ratelimit`) and for storing ephemeral RUN results. The client is initialised in `src/lib/rate-limiter.ts` using `Redis.fromEnv()`, which reads these two variables automatically.
+
+<ParamField path="UPSTASH_REDIS_REST_URL" type="string" required>
+  The HTTPS REST endpoint for your Upstash Redis database.
+
+  **Example:** `https://your-instance.upstash.io`
+</ParamField>
+
+<ParamField path="UPSTASH_REDIS_REST_TOKEN" type="string" required>
+  Bearer token used to authenticate requests to the Upstash Redis REST API. Found in the Upstash console under your database's **REST API** tab.
+</ParamField>
+
+---
+
+## Upstash QStash
+
+[QStash](https://upstash.com/qstash) is the message queue that decouples code submission requests from execution. The client and receiver are initialised in `src/lib/qstash.ts`.
+
+<ParamField path="QSTASH_TOKEN" type="string" required>
+  Token used by the QStash `Client` to publish messages to the queue. Passed when constructing `new Client({ token })`.
+</ParamField>
+
+<ParamField path="QSTASH_CURRENT_SIGNING_KEY" type="string" required>
+  Current signing key used by the QStash `Receiver` to verify the `upstash-signature` header on incoming webhook requests at `/api/webhooks/process-submission`.
+</ParamField>
+
+<ParamField path="QSTASH_NEXT_SIGNING_KEY" type="string" required>
+  Next signing key used by the QStash `Receiver` during key rotation. Ensures the webhook handler continues to accept messages while the signing key is being rolled over.
+</ParamField>
+
+---
+
+## Deployment
+
+<ParamField path="NEXT_PUBLIC_DEPLOYMENT_URL" type="string" required>
+  Full public URL of the deployed Next.js application, **without** a trailing slash. Internally mapped to `DEPLOYMENT_URL` in `src/env.js`. Used by the submission router to build the absolute callback URL passed to QStash so it knows where to deliver webhooks.
+
+  **Examples:**
+  - Production: `https://buildml.vercel.app`
+  - Local tunnel: `https://abc123.ngrok.io`
+</ParamField>
+
+---
+
+## Executor
+
+<ParamField path="EXECUTOR_URL" type="string (URL)">
+  Base URL of the FastAPI code execution service. Buildml appends `/execute` to this value when dispatching execution requests.
+
+  **Default:** `http://localhost:8000`
+
+  **Example (Docker):** `http://executor:8000`
+</ParamField>
+
+<ParamField path="EXECUTOR_SECRET" type="string">
+  Shared secret sent in the `x-secret` request header to authenticate calls from the Next.js webhook handler to the FastAPI executor.
+
+  **Default:** `dev-secret`
+
+  <Warning>
+    The default value `dev-secret` is publicly known. You **must** change this to a strong random string in any internet-facing deployment.
+  </Warning>
+</ParamField>
+
+---
+
+## Other
+
+<ParamField path="NODE_ENV" type="string">
+  Standard Node.js environment identifier. Accepted values: `development`, `test`, `production`. Defaults to `development`.
+
+  Affects several behaviours including whether `NEXTAUTH_SECRET` is required and which Prisma client logging level is active.
+</ParamField>
+
+<ParamField path="SKIP_ENV_VALIDATION" type="string">
+  Set to any truthy string (e.g. `"1"` or `"true"`) to bypass the `@t3-oss/env-nextjs` validation step entirely. Useful in CI pipelines or Docker build steps where runtime secrets are not available at build time.
+
+  ```dockerfile
+  # Example Dockerfile build arg
+  ENV SKIP_ENV_VALIDATION=1
+  RUN bun run build
+  ```
+</ParamField>
+
+---
+
+## Quick-start `.env` template
+
+Copy the block below into a `.env` file at the project root and fill in your values. Refer to the sections above for where to obtain each credential.
+
+```bash .env
+# Database
+DATABASE_URL="postgresql://postgres:password@localhost:5432/buildml"
+
+# Authentication
+NEXTAUTH_SECRET=""          # openssl rand -base64 32
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+
+# Upstash Redis
+UPSTASH_REDIS_REST_URL=""
+UPSTASH_REDIS_REST_TOKEN=""
+
+# Upstash QStash
+QSTASH_TOKEN=""
+QSTASH_CURRENT_SIGNING_KEY=""
+QSTASH_NEXT_SIGNING_KEY=""
+
+# Deployment
+NEXT_PUBLIC_DEPLOYMENT_URL="http://localhost:3000"
+
+# Executor
+EXECUTOR_URL="http://localhost:8000"
+EXECUTOR_SECRET="dev-secret"
+```

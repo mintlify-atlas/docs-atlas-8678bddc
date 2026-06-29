@@ -1,0 +1,90 @@
+---
+title: "Community Leaderboard: Track Top Solvers"
+sidebarTitle: "Leaderboard"
+description: "The Buildml leaderboard ranks users by the number of unique AI/ML problems they have solved. Rankings update in real time as submissions are processed."
+---
+
+The Buildml leaderboard is a community ranking page that shows which builders have solved the most AI/ML problems on the platform. Rankings are driven entirely by accepted (`PASS`) submissions and update automatically as new solutions are judged by the executor.
+
+## Platform Stats
+
+The leaderboard header surfaces three live community statistics:
+
+| Stat | Value |
+|---|---|
+| Builders | **80+** registered users |
+| Problems | **20+** available challenges |
+| Submissions | **500+** total code runs |
+
+## How Ranking Works
+
+A user's score is the count of **distinct problems** they have solved with at least one `PASS` submission. Multiple `PASS` submissions to the same problem count only once.
+
+The `user.getLeaderboard` tRPC query (public procedure) implements this with a Prisma `distinct` select:
+
+```typescript
+const leaderboardData = await ctx.prisma.user.findMany({
+  select: {
+    id: true,
+    name: true,
+    image: true,
+    submissions: {
+      where: { status: "PASS" },
+      select: { problemId: true },
+      distinct: ["problemId"],   // one entry per unique solved problem
+    },
+  },
+});
+
+const rankedUsers = leaderboardData
+  .map((user) => ({
+    id: user.id,
+    name: user.name ?? "Anonymous",
+    image: user.image,
+    solvedCount: user.submissions.length,
+  }))
+  .sort((a, b) => b.solvedCount - a.solvedCount);
+```
+
+The result is an array of `{ id, name, image, solvedCount }` objects sorted in descending order by `solvedCount`.
+
+## Leaderboard Table
+
+Each row in the table displays:
+
+- **Rank position** — zero-padded integer (e.g., `01`, `02`). The top three positions are highlighted in the primary accent colour.
+- **Avatar** — the user's Google profile image (via NextAuth), with a fallback icon for users without an image.
+- **Name** — the user's display name. The currently signed-in user's row is tinted and labelled **You**.
+- **Solved count** — the number of unique problems solved with a `PASS`.
+
+## Personal Rank
+
+Signed-in users see a **Personal Standing** banner above the table showing their current 1-based rank position. This is fetched via the `user.getUserRank` protected tRPC procedure, which runs the same ranking logic and returns the index of the current user in the sorted array:
+
+```typescript
+const rank = rankedUsers.findIndex((u) => u.id === currentUserId) + 1;
+return rank > 0 ? rank : null;
+```
+
+If the user has not yet solved any problems they will still appear in the list; `getUserRank` returns `null` only if the user is not found at all.
+
+## Authentication
+
+The `/leaderboard` page is publicly accessible — anyone can view the rankings. However, the **Personal Standing** banner and the **You** badge on table rows only appear for authenticated users. The `user.getUserRank` query is a `protectedProcedure` and is only called when a session exists:
+
+```typescript
+const { data: userRank } = api.user.getUserRank.useQuery(undefined, {
+  enabled: !!session,
+});
+```
+
+## Server-Side Prefetching
+
+The leaderboard page uses Next.js server components with tRPC's `HydrateClient` pattern to prefetch data before the page is sent to the browser:
+
+```typescript
+// In LeaderboardPage (server component)
+await api.user.getLeaderboard.prefetch();
+```
+
+This means the full ranked list is embedded in the initial HTML payload — no loading spinner is shown on first paint. The client-side `LeaderboardClient` component hydrates from this cache and re-fetches in the background to keep rankings current.

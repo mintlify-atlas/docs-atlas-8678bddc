@@ -1,0 +1,278 @@
+---
+title: "FastAPI Code Executor Service"
+sidebarTitle: "Executor"
+description: "The Buildml executor is a FastAPI service that runs user Python code in isolation. Learn how it receives jobs from QStash, executes tests, and returns structured results."
+---
+
+The Buildml executor is a standalone [FastAPI](https://fastapi.tiangolo.com) service responsible for running user-submitted Python code inside an isolated environment. It exposes a single HTTP endpoint that accepts a code payload, executes the corresponding test suite, and returns a structured result. The Next.js application never calls the executor directly from a tRPC mutation — instead, jobs are dispatched through [Upstash QStash](https://upstash.com/qstash) and processed asynchronously via a webhook handler.
+
+<Note>
+  The FastAPI executor is a **separate service** with its own repository and Docker image. It is not part of the Next.js application. You must run it alongside the Next.js app and point `EXECUTOR_URL` at it.
+</Note>
+
+---
+
+## Execution Endpoint
+
+The executor exposes a single route:
+
+```
+POST {EXECUTOR_URL}/execute
+```
+
+### Request
+
+**Headers:**
+
+| Header | Value |
+|---|---|
+| `Content-Type` | `application/json` |
+| `x-secret` | Value of `EXECUTOR_SECRET` env var |
+
+**Body:**
+
+```json
+{
+  "code": "<user's Python code>",
+  "task_id": "<problem slug>",
+  "problem_set_slug": "<problem set slug>"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `code` | `string` | The Python source code submitted by the user |
+| `task_id` | `string` | The problem's unique `slug` field; used to locate the test file at `/app/tests/{task_id}.py` inside the executor container |
+| `problem_set_slug` | `string` | The parent `ProblemSet` slug; used for organising test suites within the container |
+
+### Response
+
+<ResponseField name="passed" type="number">
+  Number of test cases that passed.
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total number of test cases executed.
+</ResponseField>
+
+<ResponseField name="results" type="array">
+  Per-test breakdown. Each element contains:
+
+  <ResponseField name="results[].name" type="string">
+    The test function name (e.g. `test_array_creation`).
+  </ResponseField>
+
+  <ResponseField name="results[].passed" type="boolean">
+    Whether this individual test passed.
+  </ResponseField>
+
+  <ResponseField name="results[].error" type="string">
+    Optional error message or assertion detail if the test failed.
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="stdout" type="string">
+  Combined standard output captured during execution.
+</ResponseField>
+
+<ResponseField name="stderr" type="string">
+  Standard error output, if any.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Top-level error string set when the executor itself encounters a fatal failure (e.g. a syntax error that prevents the code from running at all). When present, the submission status is set to `ERROR`.
+</ResponseField>
+
+**Example success response:**
+
+```json
+{
+  "passed": 3,
+  "total": 3,
+  "results": [
+    { "name": "test_zeros", "passed": true },
+    { "name": "test_ones", "passed": true },
+    { "name": "test_arange", "passed": true }
+  ],
+  "stdout": "",
+  "stderr": null,
+  "error": null
+}
+```
+
+**Example failure response:**
+
+```json
+{
+  "passed": 1,
+  "total": 3,
+  "results": [
+    { "name": "test_zeros", "passed": true },
+    { "name": "test_ones", "passed": false, "error": "AssertionError: shapes do not match" },
+    { "name": "test_arange", "passed": false, "error": "AssertionError: expected [0 1 2], got [1 2 3]" }
+  ],
+  "stdout": "",
+  "stderr": null,
+  "error": null
+}
+```
+
+---
+
+## Full Execution Flow
+
+The diagram below shows how a code submission travels from the user's browser through QStash to the executor and back.
+
+```
+Browser / Editor
+       │
+       │  tRPC mutation: submission.run / submission.submit
+       ▼
+Next.js tRPC Router  (src/server/api/routers/submission.ts)
+       │
+       │  qstash.publishJSON({ url: DEPLOYMENT_URL/api/webhooks/process-submission, body: {...} })
+       ▼
+Upstash QStash  (message queue)
+       │
+       │  HTTP POST with upstash-signature header
+       ▼
+Next.js Webhook  (src/app/api/webhooks/process-submission/route.ts)
+       │
+       │  Verify signature → fetch problem/submission → POST /execute
+       ▼
+FastAPI Executor  (EXECUTOR_URL/execute)
+       │
+       │  Structured ExecutorResponse
+       ▼
+Next.js Webhook (stores result)
+       │
+       ├─ RUN    → Redis  key: run_result:{runId}  (TTL: 600 s)
+       └─ SUBMIT → PostgreSQL Submission row updated (status + output)
+```
+
+### Step 1 — tRPC mutation dispatches to QStash
+
+When a user clicks **Run** or **Submit**, the tRPC procedure in `src/server/api/routers/submission.ts` publishes a message to QStash:
+
+```typescript src/server/api/routers/submission.ts
+// RUN: immediate code check (no DB record created)
+await qstash.publishJSON({
+    url: `${env.DEPLOYMENT_URL}/api/webhooks/process-submission`,
+    body: {
+        type: "RUN",
+        runId,         // crypto.randomUUID()
+        problemId: input.problemId,
+        code: input.code,
+        userId: ctx.session.user.id,
+    },
+});
+
+// SUBMIT: creates a Submission row first, then queues
+await qstash.publishJSON({
+    url: `${env.DEPLOYMENT_URL}/api/webhooks/process-submission`,
+    body: {
+        type: "SUBMIT",
+        submissionId: submission.id,
+        userId: ctx.session.user.id,
+    },
+});
+```
+
+### Step 2 — QStash delivers the message to the webhook
+
+QStash signs the request with `QSTASH_CURRENT_SIGNING_KEY` and delivers it to `{DEPLOYMENT_URL}/api/webhooks/process-submission`. The webhook handler verifies the `upstash-signature` header using the `Receiver` from `src/lib/qstash.ts`:
+
+```typescript src/app/api/webhooks/process-submission/route.ts
+const isValid = await receiver.verify({
+    body: bodyText,
+    signature,
+});
+
+if (!isValid) {
+    return new NextResponse("Invalid signature", { status: 401 });
+}
+```
+
+### Step 3 — Webhook calls the executor
+
+After verifying the signature and loading the problem data from PostgreSQL, the webhook calls the executor synchronously:
+
+```typescript src/app/api/webhooks/process-submission/route.ts
+const response = await fetch(`${env.EXECUTOR_URL}/execute`, {
+    method: "POST",
+    headers: {
+        "Content-Type": "application/json",
+        "x-secret": env.EXECUTOR_SECRET,
+    },
+    body: JSON.stringify({
+        code: userCode,
+        task_id: problemSlug,
+        problem_set_slug: problemSetSlug,
+    }),
+});
+```
+
+### Step 4 — Results are stored
+
+Once the executor responds, the webhook handler determines the final status and persists the result:
+
+| Type | Storage | Key / Location |
+|---|---|---|
+| `RUN` | Upstash Redis | `run_result:{runId}` with a 600-second TTL |
+| `SUBMIT` | PostgreSQL `Submission` row | `status` and `output` fields updated in-place |
+
+The client polls `submission.getStatus` (a tRPC query) using the `runId` or `submissionId` returned from the initial mutation to retrieve the result once it is available.
+
+---
+
+## Status Values
+
+The `status` field on a `Submission` row (or in a `run_result:*` Redis entry) takes one of four values:
+
+| Status | Meaning |
+|---|---|
+| `PENDING` | Job has been queued in QStash; execution has not completed yet |
+| `PASS` | All test cases passed (`passed === total && total > 0`) |
+| `FAIL` | One or more test cases failed |
+| `ERROR` | A fatal error occurred (syntax error, import failure, executor unreachable, etc.) |
+
+---
+
+## Rate Limiting
+
+Both the `run` and `submit` mutations are rate-limited per user via `@upstash/ratelimit` using a sliding window algorithm (configured in `src/lib/rate-limiter.ts`):
+
+| Operation | Limit |
+|---|---|
+| `run` | 5 requests per 10 seconds |
+| `submit` | 2 requests per 30 seconds |
+
+Exceeding the limit returns a `TOO_MANY_REQUESTS` TRPCError.
+
+---
+
+## Environment Variables
+
+<ParamField path="EXECUTOR_URL" type="string (URL)">
+  Base URL of the FastAPI executor service. The `/execute` path is appended automatically.
+
+  **Default:** `http://localhost:8000`
+
+  **Docker Compose example:** `http://executor:8000`
+</ParamField>
+
+<ParamField path="EXECUTOR_SECRET" type="string">
+  Shared secret sent in the `x-secret` header on every request from the webhook handler to the executor. The executor must validate this header and reject requests with an incorrect or missing value.
+
+  **Default:** `dev-secret`
+
+  <Warning>
+    The default value `dev-secret` must be replaced with a strong, randomly generated string in any production or publicly accessible deployment. Anyone who knows the secret can submit arbitrary Python code for execution.
+
+    Generate a secure replacement:
+
+    ```bash
+    openssl rand -hex 32
+    ```
+  </Warning>
+</ParamField>

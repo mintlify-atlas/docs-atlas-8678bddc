@@ -1,0 +1,87 @@
+---
+title: "Buildml: Master AI/ML Through Hands-On Coding Challenges"
+sidebarTitle: "Introduction"
+description: "Buildml is an interactive platform to learn AI/ML by implementing algorithms from scratch. Write Python, run tests, and track progress with a community leaderboard."
+---
+
+Buildml is a full-stack AI/ML education platform that replaces passive reading with active implementation. Instead of watching tutorials or skimming textbooks, you solve curated coding challenges by writing real Python — implementing neural networks, NumPy operations, and ML algorithms from scratch. Every submission is executed against automated tests, so you get immediate, objective feedback on whether your understanding is correct.
+
+## What Problem Does Buildml Solve?
+
+Most AI/ML learning resources stop at intuition. You understand _what_ a softmax function does, but you have never had to differentiate through one yourself. Buildml closes that gap by presenting problems as coding tasks: given a specification and a test suite, implement the algorithm. The platform handles sandboxed execution, result storage, and leaderboard ranking — you focus entirely on the math and code.
+
+## Core Architecture
+
+Buildml follows a clear request pipeline that separates the web layer from the compute layer, keeping the Next.js application fast and non-blocking even while user code is running.
+
+```
+Next.js frontend  →  tRPC API  →  Upstash QStash (queue)
+                                          ↓
+                              FastAPI executor service
+                                          ↓
+                     Redis (run cache) / PostgreSQL (submit record)
+                                          ↓
+                     Client polls tRPC for status updates
+```
+
+1. A user writes Python in the browser editor and clicks **Run** or **Submit**.
+2. The tRPC `submission.run` or `submission.submit` procedure enforces rate limits via Upstash Redis (run: 5 per 10 s, submit: 2 per 30 s).
+3. A job is published to an Upstash QStash async queue.
+4. QStash delivers the job to the Next.js webhook at `api/webhooks/process-submission/`.
+5. The webhook forwards the code to the FastAPI executor service at `EXECUTOR_URL/execute`.
+6. **Run** results are cached in Redis; **Submit** results are persisted to PostgreSQL with a final `PASS`, `FAIL`, or `ERROR` status.
+7. The browser polls a tRPC procedure until the result resolves.
+
+<Note>
+  The FastAPI executor service must be running and reachable at `EXECUTOR_URL` for any code execution to work. Without it, all submissions will time out. See the [Quickstart](/quickstart) for local setup and [Self-Hosting](/self-hosting) for production deployment.
+</Note>
+
+## Tech Stack
+
+| Layer | Technology | Version |
+|---|---|---|
+| Frontend framework | Next.js (App Router) | 15 |
+| UI library | React | 19 |
+| Type safety | TypeScript | 5.8 |
+| Styling | Tailwind CSS | v4 |
+| Database | PostgreSQL | — |
+| ORM | Prisma | 7 |
+| API layer | tRPC | 11 |
+| Authentication | NextAuth.js | v5 (beta) |
+| Cache / rate limiting | Upstash Redis | — |
+| Async job queue | Upstash QStash | — |
+| Deployment | Vercel | — |
+
+## Key Concepts
+
+**Problem Sets** are themed collections of problems (for example, _NumPy Fundamentals_ or _Neural Networks_). Each Problem Set groups related challenges and is seeded via dedicated scripts (`prisma/seed-numpy.ts`, `prisma/seed-nn.ts`).
+
+**Problems** are individual coding challenges. Each problem ships with a description, a starter template, and a hidden test suite. Problems belong to exactly one Problem Set.
+
+**Submissions** are records produced when a user clicks Submit. A submission always carries one of four statuses:
+
+| Status | Meaning |
+|---|---|
+| `PENDING` | Job queued in QStash, not yet executed |
+| `PASS` | All test cases passed |
+| `FAIL` | One or more test cases failed |
+| `ERROR` | Execution error (syntax, runtime, or timeout) |
+
+**Run vs Submit** — *Run* executes your code and streams the result directly to the browser from Redis. The result is ephemeral and does not count toward your score or leaderboard ranking. *Submit* records a permanent `Submission` row in PostgreSQL, updates your personal best, and feeds the leaderboard.
+
+## Explore the Docs
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone the repo, configure your environment, and have a working local instance running in five minutes.
+  </Card>
+  <Card title="Challenges" icon="code" href="/features/challenges">
+    Learn how Problem Sets and Problems are structured, how tests are written, and how scoring works.
+  </Card>
+  <Card title="API Reference" icon="brackets-curly" href="/api-reference/overview">
+    Explore every tRPC procedure — from fetching problem sets to polling submission results.
+  </Card>
+  <Card title="Contributing" icon="git-pull-request" href="/contributing/overview">
+    Set up a dev environment, follow the code-style guide, and open your first pull request.
+  </Card>
+</CardGroup>

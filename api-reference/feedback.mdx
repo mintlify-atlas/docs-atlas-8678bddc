@@ -1,0 +1,117 @@
+---
+title: "feedback Router: Submit User Feedback"
+sidebarTitle: "feedback"
+description: "The feedback.submit tRPC mutation accepts general, bug, feature, or improvement feedback and forwards it as a Discord embed via webhook. No authentication required."
+---
+
+The `feedbackRouter` exposes a single public mutation that collects user feedback and forwards it to a Discord channel as a rich embed. No authentication is required — any visitor can submit feedback. The mutation validates all input with Zod, formats a colour-coded Discord embed based on the feedback type, and returns a success acknowledgement. If the Discord webhook call fails for any reason, a `INTERNAL_SERVER_ERROR` is thrown.
+
+---
+
+## `feedback.submit`
+
+Accepts a feedback message from the user, formats it as a Discord embed with type-specific colour and emoji, and POSTs it to the configured Discord webhook URL.
+
+**Type:** mutation — **Auth:** public (no session required)
+
+### Input
+
+<ParamField body="name" type="string">
+  Optional display name of the person submitting feedback. Defaults to `"Anonymous"` in the Discord embed if omitted or blank.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  A valid email address for the submitter. Validated by Zod's `z.string().email()`. Included in the Discord embed for follow-up.
+</ParamField>
+
+<ParamField body="type" type="'general' | 'bug' | 'feature' | 'improvement'" required>
+  The category of feedback. Determines the embed colour and emoji displayed in Discord:
+
+  | Value | Label | Emoji | Hex Colour |
+  |-------|-------|-------|------------|
+  | `general` | General Feedback | 💬 | `#6366f1` (purple) |
+  | `bug` | Bug Report | 🐛 | `#ef4444` (red) |
+  | `feature` | Feature Request | ✨ | `#22c55e` (green) |
+  | `improvement` | Improvement Suggestion | 💡 | `#f59e0b` (amber) |
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  The feedback message body. Must be at least 10 characters (`z.string().min(10)`). Messages longer than 1 024 characters are truncated to 1 021 characters with `"..."` appended before being sent to Discord (Discord embed field limit).
+</ParamField>
+
+### Usage
+
+```typescript
+const feedbackMutation = api.feedback.submit.useMutation({
+  onSuccess: ({ message }) => toast.success(message),
+  onError: (error) => toast.error(error.message),
+});
+
+feedbackMutation.mutate({
+  email: 'user@example.com',
+  type: 'bug',
+  message: 'The Run button does not respond on mobile.',
+});
+```
+
+Full form example with an optional name field:
+
+```typescript
+feedbackMutation.mutate({
+  name: 'Alice',
+  email: 'alice@example.com',
+  type: 'feature',
+  message: 'It would be great to have a dark/light theme toggle in the editor.',
+});
+```
+
+### Response
+
+<ResponseField name="success" type="true" required>
+  Always `true` on a successful webhook delivery. If the Discord POST is not `ok`, the procedure throws rather than returning.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  A human-readable confirmation string:
+  `"Thank you! Your feedback has been submitted successfully."`
+  Suitable for displaying directly in a toast notification.
+</ResponseField>
+
+### Discord Embed Structure
+
+When the mutation succeeds, Discord receives a payload with the following embed fields:
+
+```json
+{
+  "embeds": [
+    {
+      "title": "🐛 New Bug Report",
+      "color": 15164484,
+      "fields": [
+        { "name": "From",    "value": "Alice",               "inline": true  },
+        { "name": "Email",   "value": "alice@example.com",   "inline": true  },
+        { "name": "Type",    "value": "Bug Report",          "inline": true  },
+        { "name": "Message", "value": "The Run button ...",  "inline": false }
+      ],
+      "footer": { "text": "buildml Feedback System" },
+      "timestamp": "2024-11-10T14:23:00.000Z"
+    }
+  ]
+}
+```
+
+### Errors
+
+<Warning>
+  If the Discord webhook returns a non-`ok` HTTP status, the mutation throws:
+  `TRPCClientError: Failed to send feedback. Please try again later.` with code `INTERNAL_SERVER_ERROR`.
+
+  The same error is thrown if a network-level failure prevents the POST from completing.
+</Warning>
+
+<Note>
+  Because `feedback.submit` is a public procedure, it can be called from
+  unauthenticated pages such as a landing page or a help modal. There is
+  currently no per-IP or per-email rate limiting on this endpoint — consider
+  adding one if the feedback form is publicly accessible without any friction.
+</Note>

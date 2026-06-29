@@ -1,0 +1,106 @@
+{
+  "projectType": "saas",
+  "projectName": "Buildml",
+  "projectDescription": "A full-stack AI/ML education platform where developers master machine learning concepts through hands-on coding challenges, with an in-browser code editor, automated test execution, and a community leaderboard.",
+  "theme": "willow",
+  "primaryColor": "#ecddd6",
+  "lightColor": "#848480",
+  "darkColor": "#0c0c0c",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "self-hosting"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/challenges",
+              "features/code-editor",
+              "features/submissions",
+              "features/leaderboard",
+              "features/profile"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/database",
+              "configuration/authentication",
+              "configuration/executor"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": [
+              "contributing/overview",
+              "contributing/adding-problems"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/overview"
+            ]
+          },
+          {
+            "group": "tRPC Routers",
+            "pages": [
+              "api-reference/problem-set",
+              "api-reference/problem",
+              "api-reference/submission",
+              "api-reference/user",
+              "api-reference/feedback"
+            ]
+          },
+          {
+            "group": "Webhooks",
+            "pages": [
+              "api-reference/webhooks"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Hands-on AI/ML coding challenges organized into curated problem sets",
+    "In-browser Monaco code editor with Python support",
+    "Asynchronous code execution via Upstash QStash and a FastAPI executor service",
+    "Real-time submission status polling (Run vs. Submit modes)",
+    "Community leaderboard ranked by solved problems",
+    "User profiles with activity heatmap and difficulty-breakdown stats",
+    "Google OAuth authentication via NextAuth.js v5",
+    "Rate limiting on code execution (run: 5/10s, submit: 2/30s) via Upstash Redis",
+    "Math rendering in problem descriptions with KaTeX",
+    "Resizable split-pane layout (problem statement + editor + console)"
+  ],
+  "publicApiSurface": [
+    "problemSet.getAll — list all problem sets with problem counts",
+    "problemSet.getBySlug — fetch a problem set and its ordered problems",
+    "problem.getAll — list all problems with their problem set",
+    "problem.getBySlug — fetch a single problem by slug",
+    "submission.run — execute code against tests (no DB record, returns runId)",
+    "submission.submit — submit code, persists a Submission record, returns submission",
+    "submission.getStatus — poll run result from Redis or submission status from DB",
+    "user.getAllUsers — total user count",
+    "user.getLeaderboard — ranked list by unique problems solved (PASS status)",
+    "user.getUserRank — authenticated user's current rank",
+    "user.getProfile — profile stats: solved counts by difficulty, activity history",
+    "feedback.submit — send feedback (general/bug/feature/improvement) to Discord webhook",
+    "POST /api/webhooks/process-submission — QStash webhook that calls the FastAPI executor"
+  ]
+}

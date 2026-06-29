@@ -1,0 +1,113 @@
+---
+title: "In-Browser Python Code Editor"
+sidebarTitle: "Code Editor"
+description: "Buildml's code editor is powered by Monaco with Python syntax highlighting. The resizable split-pane layout shows the problem description, editor, and console side by side."
+---
+
+Buildml embeds a full-featured code editor directly in the browser so you can read the problem statement, write your solution, and see test results without ever leaving the page. The editor is powered by the same engine that drives VS Code, and the layout is fully resizable so you can configure the workspace to your preference.
+
+<Note>
+  The editor currently supports **Python only**. All problem `templateCode` and test suites are written for Python, and the executor runs code in a Python environment.
+</Note>
+
+## Monaco Editor
+
+The `CodeEditor` component (`src/app/_components/editor.tsx`) wraps [`@monaco-editor/react`](https://github.com/suren-atoyan/monaco-react) and exposes a minimal interface:
+
+```typescript
+interface CodeEditorProps {
+  value?: string;
+  onChange?: (value: string | undefined) => void;
+  language?: string; // defaults to "python"
+}
+```
+
+Monaco is configured with the following options:
+
+| Option | Value |
+|---|---|
+| `language` | `"python"` (default) |
+| `fontSize` | `14` |
+| `lineNumbers` | `"on"` |
+| `minimap` | disabled |
+| `scrollBeyondLastLine` | `false` |
+| `automaticLayout` | `true` (adapts to panel resizes) |
+| `theme` | `"vs-dark"` in dark mode, `"light"` in light mode |
+
+The theme follows the user's active `next-themes` preference, so the editor matches the rest of the Buildml UI.
+
+## Split-Pane Layout
+
+The problem solver page uses `react-resizable-panels` to create a three-zone workspace arranged in two axes:
+
+```
+┌─────────────────────┬──────────────────────────┐
+│                     │                          │
+│  Problem Statement  │     Monaco Editor        │
+│                     │      (default 70%)       │
+│   (default 40%)     ├──────────────────────────┤
+│                     │     Console Panel        │
+│                     │      (default 30%)       │
+└─────────────────────┴──────────────────────────┘
+```
+
+### Panel sizes
+
+| Panel | `defaultSize` | `minSize` |
+|---|---|---|
+| Problem description (left) | `40` | `25` |
+| Editor (right-top) | `70` | `20` |
+| Console (right-bottom) | `30` | `10` |
+
+A horizontal `ResizableHandle` sits between the left and right panels; a vertical `ResizableHandle` separates the editor from the console. Both handles are draggable and have a visual grip indicator (`withHandle`).
+
+### Left panel — Problem Statement
+
+The left panel renders the problem's `description` field as rich content using:
+- **`react-markdown`** for Markdown parsing
+- **`remark-math`** for `$...$` and `$$...$$` math delimiters
+- **`rehype-katex`** + `katex/dist/katex.min.css` for KaTeX math rendering
+
+This means problem descriptions can contain formatted text, code snippets, mathematical formulas (e.g., attention score equations), and tables — all rendered natively in the browser.
+
+### Right panel — Editor
+
+The upper half of the right panel contains the Monaco editor. When a problem loads, the editor is pre-populated with the problem's `templateCode` pulled from the database:
+
+```typescript
+useEffect(() => {
+  if (problem) {
+    setCode(problem.templateCode);
+  }
+}, [problem]);
+```
+
+Users write their solution directly in this editor. The current code string is kept in React state and passed to the Run / Submit mutations.
+
+### Right panel — Console
+
+The lower half of the right panel is the Console. It displays execution state and results:
+
+| State | Display |
+|---|---|
+| Idle | `◆ Ready for execution. Click 'Run' to test your logic.` |
+| Executing | Animated pulse indicator: `➜ Executing test suite...` |
+| `PASS` | Green dot + `ALL TESTS PASSED` label in the console header |
+| `FAIL` / `ERROR` | Red-tinted output text + `EXECUTION FAIL` / `EXECUTION ERROR` label |
+
+Output is rendered inside a `<pre>` block with `whitespace-pre-wrap` so multi-line test results, `✓`/`✗` per-test lines, and stderr traces all display correctly.
+
+## Run vs Submit
+
+Two action buttons live inside the console header bar:
+
+<CardGroup cols={2}>
+  <Card title="RUN" icon="play">
+    Executes your current code against the problem's test suite and shows results in the console. **Does not create a database record** — results are ephemeral and stored in Redis only. Use this to iterate quickly without affecting your submission history.
+  </Card>
+  <Card title="SUBMIT" icon="paper-plane">
+    Executes your code **and** persists a `Submission` row in the database with status `PENDING`, which is later updated to `PASS`, `FAIL`, or `ERROR`. Successful submissions count toward your profile stats, leaderboard rank, and difficulty progress bars.
+  </Card>
+</CardGroup>
+
+Both buttons are disabled while execution is in progress (`isExecuting === true`) to prevent duplicate requests.

@@ -1,0 +1,286 @@
+---
+title: "Database Setup and Schema for Buildml"
+sidebarTitle: "Database"
+description: "Buildml uses PostgreSQL with Prisma ORM. Learn the schema models (User, ProblemSet, Problem, Submission), migration commands, and how to seed sample data."
+---
+
+Buildml uses [PostgreSQL](https://www.postgresql.org) as its primary database and [Prisma ORM](https://www.prisma.io) for schema management, migrations, and type-safe queries. The Prisma client is initialised once as a singleton in `src/db/client.ts` using the `@prisma/adapter-pg` driver adapter, which provides a native `pg` connection pool rather than Prisma's default query engine binary.
+
+<Note>
+  The Prisma client is generated to `../generated/prisma` (relative to the schema file), **not** the default `node_modules/@prisma/client`. Import it as `import { PrismaClient } from "../../generated/prisma/client"` or via the `~/db` path alias which re-exports the singleton `prisma` instance.
+</Note>
+
+---
+
+## Prisma Configuration
+
+The data source and generator are declared at the top of `prisma/schema.prisma`:
+
+```prisma prisma/schema.prisma
+generator client {
+    provider = "prisma-client-js"
+    output   = "../generated/prisma"
+}
+
+datasource db {
+    provider = "postgresql"
+}
+```
+
+### Database Client Singleton
+
+The file `src/db/client.ts` creates the single shared `PrismaClient` instance used across the entire application:
+
+```typescript src/db/client.ts
+import { PrismaPg } from "@prisma/adapter-pg";
+import { env } from "~/env";
+import { PrismaClient } from "../../generated/prisma/client";
+
+const databaseUrl = env.DATABASE_URL;
+
+if (!databaseUrl) {
+    throw new Error("DATABASE_URL is not set. Please add it to your .env file.");
+}
+
+const adapter = new PrismaPg({
+    connectionString: databaseUrl,
+});
+
+export const prisma = new PrismaClient({ adapter });
+```
+
+`PrismaPg` from `@prisma/adapter-pg` connects directly via the `pg` Node.js driver, bypassing the Rust query engine binary. This improves cold-start performance in serverless environments such as Vercel.
+
+---
+
+## Schema Models
+
+Buildml's schema defines six models. Three (`Account`, `Session`, `VerificationToken`) are required by the NextAuth.js Prisma adapter. The remaining three (`ProblemSet`, `Problem`, `Submission`) model the core challenge platform data.
+
+### User
+
+Represents an authenticated user. Extended with a `submissions` relation beyond the standard NextAuth.js fields.
+
+```prisma prisma/schema.prisma
+model User {
+    id            String       @id @default(cuid())
+    name          String?
+    email         String?      @unique
+    emailVerified DateTime?
+    image         String?
+    accounts      Account[]
+    sessions      Session[]
+    submissions   Submission[]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `String` | CUID, primary key |
+| `name` | `String?` | Display name from Google OAuth |
+| `email` | `String?` | Unique; sourced from Google account |
+| `emailVerified` | `DateTime?` | Set automatically in the `createUser` NextAuth event |
+| `image` | `String?` | Profile photo URL from Google |
+| `accounts` | `Account[]` | Linked OAuth provider accounts |
+| `sessions` | `Session[]` | Active sessions |
+| `submissions` | `Submission[]` | All code submissions by this user |
+
+### ProblemSet
+
+A named collection of related coding problems (e.g. "NumPy Fundamentals", "Neural Networks").
+
+```prisma prisma/schema.prisma
+model ProblemSet {
+    id          String    @id @default(cuid())
+    title       String
+    slug        String    @unique
+    description String?   @db.Text
+    problems    Problem[]
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `String` | CUID, primary key |
+| `title` | `String` | Human-readable name (e.g. `"NumPy Fundamentals"`) |
+| `slug` | `String` | URL-safe unique identifier (e.g. `"numpy"`) |
+| `description` | `String?` | Stored as `TEXT`; markdown supported |
+| `problems` | `Problem[]` | Problems belonging to this set |
+| `createdAt` | `DateTime` | Auto-set on creation |
+| `updatedAt` | `DateTime` | Auto-updated on every write |
+
+### Problem
+
+A single coding challenge, containing the template shown to the user and the test suite used for evaluation.
+
+```prisma prisma/schema.prisma
+model Problem {
+    id           String       @id @default(cuid())
+    title        String
+    slug         String       @unique
+    description  String       @db.Text
+    difficulty   String       // Easy, Medium, Hard
+    templateCode String       @db.Text
+    testCode     String       @db.Text
+    order        Int          @default(0)
+    problemSetId String?
+    problemSet   ProblemSet?  @relation(fields: [problemSetId], references: [id])
+    submissions  Submission[]
+    createdAt    DateTime     @default(now())
+    updatedAt    DateTime     @updatedAt
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `String` | CUID, primary key |
+| `title` | `String` | Display title |
+| `slug` | `String` | Unique slug; used as `task_id` when calling the executor |
+| `description` | `String` | Problem statement in markdown (`TEXT`) |
+| `difficulty` | `String` | One of `Easy`, `Medium`, or `Hard` |
+| `templateCode` | `String` | Starter Python code shown in the editor (`TEXT`) |
+| `testCode` | `String` | Pytest-style test script run by the executor (`TEXT`) |
+| `order` | `Int` | Position within the problem set; defaults to `0` |
+| `problemSetId` | `String?` | Foreign key to `ProblemSet` |
+| `submissions` | `Submission[]` | All submissions for this problem |
+
+### Submission
+
+Persists the result of a user's code submission. Created with `status: "PENDING"` and updated asynchronously by the QStash webhook handler.
+
+```prisma prisma/schema.prisma
+model Submission {
+    id        String   @id @default(cuid())
+    problemId String
+    userId    String
+    code      String   @db.Text
+    status    String   // PENDING, PASS, FAIL, ERROR
+    output    String?  @db.Text
+    problem   Problem  @relation(fields: [problemId], references: [id])
+    user      User     @relation(fields: [userId], references: [id])
+    createdAt DateTime @default(now())
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `String` | CUID, primary key |
+| `problemId` | `String` | Foreign key to `Problem` |
+| `userId` | `String` | Foreign key to `User` |
+| `code` | `String` | The submitted Python code (`TEXT`) |
+| `status` | `String` | `PENDING` → `PASS` \| `FAIL` \| `ERROR` |
+| `output` | `String?` | Human-readable test result summary (`TEXT`) |
+| `createdAt` | `DateTime` | Submission timestamp |
+
+### Account, Session, VerificationToken
+
+These three models are required by the [NextAuth.js Prisma Adapter](https://authjs.dev/getting-started/adapters/prisma) and must not be removed or renamed.
+
+```prisma prisma/schema.prisma
+model Account {
+    id                       String  @id @default(cuid())
+    userId                   String
+    type                     String
+    provider                 String
+    providerAccountId        String
+    refresh_token            String?
+    access_token             String?
+    expires_at               Int?
+    token_type               String?
+    scope                    String?
+    id_token                 String?
+    session_state            String?
+    refresh_token_expires_in Int?
+    user                     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([provider, providerAccountId])
+}
+
+model Session {
+    id           String   @id @default(cuid())
+    sessionToken String   @unique
+    userId       String
+    expires      DateTime
+    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+    identifier String
+    token      String   @unique
+    expires    DateTime
+
+    @@unique([identifier, token])
+}
+```
+
+---
+
+## CLI Commands
+
+The following commands are available via `bun run <script>` (defined in `package.json`):
+
+<CardGroup cols={2}>
+  <Card title="db:push" icon="upload">
+    Introspects the current `schema.prisma` and pushes all changes directly to the database **without** creating a migration file. Best suited for rapid iteration during development.
+
+    ```bash
+    bun run db:push
+    # → prisma db push
+    ```
+  </Card>
+  <Card title="db:migrate" icon="file-plus">
+    Generates a new SQL migration file in `prisma/migrations/` without applying it. Use this to review the SQL before applying to a production database.
+
+    ```bash
+    bun run db:migrate
+    # → prisma migrate --create-only
+    ```
+  </Card>
+  <Card title="db:generate" icon="gear">
+    Runs `prisma migrate dev`, which creates and applies a new migration, then regenerates the Prisma client in `../generated/prisma`. Run this after every schema change.
+
+    ```bash
+    bun run db:generate
+    # → prisma migrate dev
+    ```
+  </Card>
+  <Card title="db:studio" icon="table">
+    Opens [Prisma Studio](https://www.prisma.io/studio) — a local web-based GUI for browsing and editing database records.
+
+    ```bash
+    bun run db:studio
+    # → prisma studio
+    ```
+  </Card>
+</CardGroup>
+
+---
+
+## Seeding Sample Data
+
+The `prisma/` directory contains three seed scripts for populating the database with starter problems:
+
+| Script | Content |
+|---|---|
+| `prisma/seed.ts` | Base seed — creates the initial problem sets and shared configuration |
+| `prisma/seed-numpy.ts` | Populates the **NumPy Fundamentals** problem set with array manipulation challenges |
+| `prisma/seed-nn.ts` | Populates the **Neural Networks** problem set with deep learning implementation challenges |
+
+Run a seed script directly with `bun`:
+
+```bash
+# Base seed
+bun prisma/seed.ts
+
+# NumPy problems
+bun prisma/seed-numpy.ts
+
+# Neural Network problems
+bun prisma/seed-nn.ts
+```
+
+<Note>
+  Seed scripts use the same `prisma` singleton from `src/db/client.ts`. Make sure `DATABASE_URL` is set in your `.env` before running them, and that `bun run db:generate` has been run at least once so the Prisma client exists at `generated/prisma/`.
+</Note>

@@ -1,0 +1,311 @@
+---
+title: "Add New Problems and Problem Sets to Buildml"
+sidebarTitle: "Adding Problems"
+description: "Create a new AI/ML problem set or individual problem by writing a seed script, providing a Python template, and a test file for the FastAPI executor to run."
+---
+
+Buildml's problem library grows through community contributions. If you have an AI/ML concept, algorithm, or paper implementation that would make a good challenge, you can add it by writing a TypeScript seed script, providing a Python starter template for users, and supplying a test file for the executor service that grades submissions. This guide walks through every step of that process.
+
+## Data Model Overview
+
+Before writing any code, it helps to understand how content is structured in the database. The Prisma schema (`prisma/schema.prisma`) defines two core models for problem content:
+
+**`ProblemSet`** is a named, slug-identified collection of related problems — for example, `"NumPy Fundamentals"` or `"Attention Is All You Need"`. It has a `title`, a globally unique `slug`, and an optional `description`.
+
+**`Problem`** belongs to a `ProblemSet` and represents a single coding challenge. Each problem has:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `title` | `String` | Display name shown in the UI |
+| `slug` | `String` (unique) | URL identifier — must be globally unique across all problems |
+| `description` | `String` (`@db.Text`) | Full problem statement; Markdown with KaTeX math supported |
+| `difficulty` | `String` | `"Easy"`, `"Medium"`, or `"Hard"` |
+| `templateCode` | `String` (`@db.Text`) | Python starter code shown to the user |
+| `testCode` | `String` (`@db.Text`) | Python verification script (or a reference comment pointing to the executor test) |
+| `order` | `Int` | Display order within the problem set (1-indexed) |
+| `problemSetId` | `String?` | Foreign key linking to the parent `ProblemSet` |
+
+A `Submission` stores a user's code attempt alongside a `status` of `PENDING`, `PASS`, `FAIL`, or `ERROR`, with output from the executor written back to the `output` field.
+
+## Creating a New Problem Set
+
+<Steps>
+  <Step title="Create a seed file">
+    Add a new file at `prisma/seed-{topic}.ts`. Model it after `prisma/seed-numpy.ts`, which seeds the "NumPy Fundamentals" problem set. Start by importing the Prisma client:
+
+    ```typescript
+    import { prisma } from "~/db";
+
+    async function main() {
+      // your upsert logic here
+    }
+
+    main()
+      .catch((e) => {
+        console.error(e);
+        process.exit(1);
+      })
+      .finally(async () => {
+        await prisma.$disconnect();
+      });
+    ```
+
+    The `finally` block ensures the database connection is always closed, even if the seed throws.
+  </Step>
+
+  <Step title="Define the ProblemSet">
+    Use `prisma.problemSet.upsert` so the script is safe to run repeatedly. The `where` clause matches on `slug`, and `update` keeps the description in sync if you re-run:
+
+    ```typescript
+    const myProblemSet = await prisma.problemSet.upsert({
+      where: { slug: "my-topic" },
+      update: {
+        title: "My Topic",
+        description: "A short description of what this set covers.",
+      },
+      create: {
+        title: "My Topic",
+        slug: "my-topic",
+        description: "A short description of what this set covers.",
+      },
+    });
+
+    console.log(`Created problem set: ${myProblemSet.title}`);
+    ```
+  </Step>
+
+  <Step title="Define each Problem">
+    Build an array of problem objects and upsert them in a loop. Each problem must reference the parent set via `problemSetId`:
+
+    ```typescript
+    const problems = [
+      {
+        title: "My First Problem",
+        slug: "my-topic-problem-1",
+        difficulty: "Easy",
+        order: 1,
+        problemSetId: myProblemSet.id,
+        description: `## My First Problem\n\nProblem statement here...`,
+        templateCode: `import numpy as np\n\ndef my_function(x):\n    # Your code here\n    raise NotImplementedError\n`,
+        testCode:
+          "# Tests are executed in the Docker sandbox. See executor test: my-topic-problem-1.py",
+      },
+    ];
+
+    for (const problem of problems) {
+      await prisma.problem.upsert({
+        where: { slug: problem.slug },
+        update: problem,
+        create: problem,
+      });
+    }
+
+    console.log(`Seeded ${problems.length} problems for "${myProblemSet.title}"`);
+    ```
+  </Step>
+
+  <Step title="Run the seed script">
+    Execute the seed file directly with Bun (or `npx ts-node` if you prefer):
+
+    ```bash
+    bun prisma/seed-{topic}.ts
+    ```
+
+    You can also use `npx ts-node` if your environment doesn't support Bun's direct TypeScript execution:
+
+    ```bash
+    npx ts-node prisma/seed-{topic}.ts
+    ```
+
+    The upsert logic means re-running the script is safe — it will update existing records rather than duplicating them.
+  </Step>
+
+  <Step title="Add the test file for the executor">
+    The test script is what the FastAPI executor service actually runs when a user submits code. Place your test at the path the executor expects inside its Docker container:
+
+    ```
+    /app/tests/{problem-slug}.py
+    ```
+
+    The test file imports the user's solution module and runs assertions. See the [Test Code Conventions](#test-code-conventions) section below for the expected format and a real example from the existing seed data.
+  </Step>
+</Steps>
+
+## Problem Description Format
+
+Descriptions are rendered as full Markdown with LaTeX math via [KaTeX](https://katex.org/). Use standard Markdown for headings, lists, code blocks, and bold/italic text. Use KaTeX delimiters for math:
+
+- **Inline math** — wrap in single dollar signs: `$f(x) = \sigma(x) = \frac{1}{1 + e^{-x}}$`
+- **Block (display) math** — wrap in double dollar signs:
+
+```markdown
+$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$$
+```
+
+A well-structured description typically contains:
+1. A brief prose introduction to the concept
+2. A **Mathematical Formulation** section with the defining equations
+3. An **Instructions** section listing the exact function signature and argument/return types
+4. A short **Example** showing expected inputs and outputs as a Python code block
+5. Any **Constraints** (e.g., "Use pure NumPy. PyTorch/JAX are not allowed.")
+
+Here is a real example from `prisma/seed-nn.ts`, showing the sigmoid activation description. The description field would contain the following Markdown text:
+
+    ## Sigmoid Activation Function
+
+    The **sigmoid** function maps any real number to a value between 0 and 1.
+
+    ### Mathematical Formulation
+
+    $$\sigma(x) = \frac{1}{1 + e^{-x}}$$
+
+    The derivative has an elegant form:
+
+    $$\sigma'(x) = \sigma(x) \cdot (1 - \sigma(x))$$
+
+    ### Instructions
+
+    Implement `sigmoid(x)` and `sigmoid_derivative(x)`.
+
+    ### Example
+
+    ```python
+    sigmoid(np.array([0.0]))        # → [0.5]
+    sigmoid_derivative(np.array([0.0]))  # → [0.25]
+    ```
+
+## Template Code Conventions
+
+`templateCode` is the Python starter shown to users in the code editor when they open a problem. It should:
+
+- Import any standard libraries the solution will need (typically `numpy as np`)
+- Define the exact function signature specified in the description
+- Include a docstring documenting args and return type
+- End with `raise NotImplementedError` (preferred) or `pass` as the stub body
+
+A minimal example from `prisma/seed-numpy.ts`:
+
+```python
+import numpy as np
+
+def create_and_reshape(N, rows, cols):
+    """
+    N: int - number of elements (0 to N-1)
+    rows: int - number of rows in output
+    cols: int - number of columns in output
+    returns: np.ndarray of shape (rows, cols) containing 0..N-1
+    """
+    # Your code here
+    pass
+```
+
+For problems that require multiple functions, define each stub separately. Here is an example from `prisma/seed-nn.ts` (two-layer neural network):
+
+```python
+import numpy as np
+
+def initialize_network(n_input, n_hidden, n_output):
+    """
+    Initialize a 2-layer neural network.
+    Returns: dict with keys W1, b1, W2, b2
+    """
+    raise NotImplementedError
+
+def forward(X, params):
+    """
+    Forward pass through the 2-layer network.
+    Args:
+        X: Input (m, n_input)
+        params: dict with W1, b1, W2, b2
+    Returns:
+        y_hat: Predictions (m, n_output)
+    """
+    raise NotImplementedError
+
+def train(X, y, params, lr=0.01, epochs=1000):
+    """
+    Train the network using gradient descent.
+    Returns: Updated params dict
+    """
+    raise NotImplementedError
+```
+
+## Test Code Conventions
+
+The test file is a standalone Python script run inside the executor's Docker sandbox. It imports the user's submitted code as `solution` and uses `assert` statements to verify correctness. When all assertions pass, it prints `"SUCCESS"` to stdout — that signal tells the executor the submission passed.
+
+Here is a real test from `prisma/seed.ts` (Xavier initialization):
+
+```python
+import numpy as np
+from solution import xavier_init
+
+def test():
+    shape = (100, 100)
+    gain = 1.0
+    weights = xavier_init(shape, gain)
+
+    # Check shape
+    assert weights.shape == shape, f"Expected shape {shape}, got {weights.shape}"
+
+    # Check dtype
+    assert weights.dtype == np.float32, f"Expected dtype float32, got {weights.dtype}"
+
+    # Check statistical properties
+    n_out, n_in = shape
+    expected_std = gain * np.sqrt(2.0 / (n_in + n_out))
+    actual_std = np.std(weights)
+
+    assert np.abs(actual_std - expected_std) < 0.05, \
+        f"Expected std ~{expected_std:.4f}, got {actual_std:.4f}"
+
+    # Check mean is close to 0
+    actual_mean = np.mean(weights)
+    assert np.abs(actual_mean) < 0.05, f"Expected mean ~0, got {actual_mean:.4f}"
+
+    print("SUCCESS")
+
+if __name__ == "__main__":
+    test()
+```
+
+Key conventions to follow:
+- Always import from `solution` (the executor names the user's file `solution.py`)
+- Provide 5–10 test cases covering edge cases (empty arrays, boundary values, dtype checks)
+- Use descriptive assertion messages so users understand what failed
+- Print `"SUCCESS"` at the end of the test function — the executor reads this from stdout
+- Gate execution with `if __name__ == "__main__": test()`
+
+## Difficulty Guidelines
+
+Choose the difficulty level based on the cognitive complexity of the problem:
+
+| Difficulty | When to use | Example |
+|---|---|---|
+| **Easy** | Tests a single concept with a direct formula or one NumPy operation | `sigmoid(x)`, `reverse_array`, `layer_norm` |
+| **Medium** | Combines 2–3 concepts; requires knowing how to compose operations correctly | `xavier_init`, `matrix_normalization`, `binary_cross_entropy` |
+| **Hard** | Implements a complex algorithm, requires careful understanding of shapes/broadcasting, or comes directly from a research paper | `multi_head_attention`, `two_layer_nn` (with backprop), `moving_average` (vectorized) |
+
+The existing problem sets follow a rough distribution of 3 Easy / 3 Medium / 3 Hard per set for nine-problem sets, or 2 / 2 / 2 for six-problem sets. Aim for a similar spread when adding a new set.
+
+## Verifying Your Problems
+
+After running your seed script, start the development server and navigate to `/practice` to confirm your new problem set appears in the list. Click through to individual problems and verify that:
+
+- The description renders correctly (math, code blocks, headings)
+- The template code appears in the editor pre-populated
+- The difficulty badge shows the correct level
+- The problems appear in the correct `order` within the set
+
+```bash
+bun run dev
+# Then open http://localhost:3000/practice
+```
+
+<Note>
+  Adding a problem to the database is only half the work. The executor service is a separate FastAPI application running in Docker. You must also deploy the corresponding test file to `/app/tests/{problem-slug}.py` inside that container. Without the test file in place, all submissions to your new problem will return an `ERROR` status. Coordinate with a maintainer if you need access to the executor service repository.
+</Note>
+
+<Warning>
+  Problem `slug` values must be **globally unique across every problem in every problem set**. The database enforces this with a `@unique` constraint on the `Problem.slug` field. Use a descriptive, topic-scoped prefix to avoid collisions — for example `numpy-moving-average`, `nn1_sigmoid`, or `a4_multi_head_attention` — rather than generic names like `problem-1` or `activation`.
+</Warning>

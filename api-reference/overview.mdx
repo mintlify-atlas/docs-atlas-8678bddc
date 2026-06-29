@@ -1,0 +1,229 @@
+---
+title: "Buildml tRPC API Reference Overview"
+sidebarTitle: "Overview"
+description: "Buildml exposes a type-safe tRPC v11 API with five routers: problem, problemSet, submission, user, and feedback. Learn how to call procedures from client and server."
+---
+
+Buildml's entire API layer is built on **tRPC v11** — there are no traditional REST endpoints (except for the QStash webhook). Every procedure is fully type-safe end-to-end: your editor knows the exact input and output shape of every call before you ship a single line to production.
+
+## Root Router
+
+The root router is assembled in `src/server/api/root.ts` and combines five sub-routers into a single `appRouter` export. The exported `AppRouter` type is the source of truth for all client-side type inference.
+
+```typescript
+// src/server/api/root.ts
+import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
+import { feedbackRouter } from "./routers/feedback";
+import { problemRouter } from "./routers/problem";
+import { problemSetRouter } from "./routers/problemSet";
+import { submissionRouter } from "./routers/submission";
+import { userRouter } from "./routers/user";
+
+export const appRouter = createTRPCRouter({
+  feedback: feedbackRouter,
+  problem: problemRouter,
+  problemSet: problemSetRouter,
+  submission: submissionRouter,
+  user: userRouter,
+});
+
+export type AppRouter = typeof appRouter;
+export const createCaller = createCallerFactory(appRouter);
+```
+
+<Note>
+  The `AppRouter` type is exported and used by both `~/trpc/react` and
+  `~/trpc/server` to infer inputs, outputs, and error shapes automatically. You
+  never need to write manual type definitions for API responses — TypeScript
+  propagates them from the router definitions.
+</Note>
+
+## Available Routers
+
+<CardGroup cols={2}>
+  <Card title="problem" icon="code" href="/api-reference/problem">
+    Fetch individual problems and their metadata. Used to populate the challenge
+    editor view.
+  </Card>
+  <Card title="problemSet" icon="layer-group" href="/api-reference/problem-set">
+    Fetch collections of problems grouped into a problem set. Powers the
+    challenge browser and leaderboard pages.
+  </Card>
+  <Card title="submission" icon="paper-plane" href="/api-reference/submission">
+    Run code against tests synchronously, or submit for permanent grading via
+    QStash. Includes a `getStatus` query for polling results.
+  </Card>
+  <Card title="user" icon="user" href="/api-reference/user">
+    Retrieve leaderboard rankings and individual user profiles. Useful for
+    building progress dashboards.
+  </Card>
+  <Card title="feedback" icon="message" href="/api-reference/feedback">
+    Submit user feedback on problems or the platform. No authentication required.
+  </Card>
+</CardGroup>
+
+## Procedure Types
+
+Buildml defines two procedure types in `src/server/api/trpc.ts`. Both include a **timing middleware** that logs execution duration and adds an artificial delay in development to surface loading states.
+
+### `publicProcedure`
+
+No authentication required. Any visitor can invoke a public procedure.
+
+```typescript
+export const publicProcedure = t.procedure.use(timingMiddleware);
+```
+
+### `protectedProcedure`
+
+Requires an active NextAuth session. If the caller is not signed in, tRPC throws a `UNAUTHORIZED` error before the resolver runs.
+
+```typescript
+export const protectedProcedure = t.procedure
+  .use(timingMiddleware)
+  .use(({ ctx, next }) => {
+    if (!ctx.session?.user) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
+    return next({
+      ctx: {
+        // infers `session` as non-nullable in all protected resolvers
+        session: { ...ctx.session, user: ctx.session.user },
+      },
+    });
+  });
+```
+
+## HTTP Transport
+
+The tRPC handler is mounted at:
+
+```
+POST /api/trpc/[trpc]
+```
+
+The client uses `httpBatchStreamLink` with **SuperJSON** as the transformer, so complex types like `Date`, `Map`, and `Set` round-trip correctly between server and client. Requests from React Client Components carry the header `x-trpc-source: nextjs-react`; requests from React Server Components carry `x-trpc-source: rsc`.
+
+## Calling from the Server
+
+In React Server Components, import `api` from `~/trpc/server`. This uses a direct server-side caller — no HTTP round-trip occurs.
+
+```typescript
+import { api } from "~/trpc/server";
+
+// Fetch all problem sets (public procedure)
+const problemSets = await api.problemSet.getAll();
+
+// Fetch a single problem by ID
+const problem = await api.problem.getById({ id: "clx..." });
+```
+
+The `HydrateClient` helper exported from the same module lets you prefetch queries and dehydrate them into the React tree for client-side cache hydration.
+
+```typescript
+import { api, HydrateClient } from "~/trpc/server";
+
+export default async function Page() {
+  void api.problemSet.getAll.prefetch();
+
+  return (
+    <HydrateClient>
+      <ProblemSetList />
+    </HydrateClient>
+  );
+}
+```
+
+## Calling from the Client
+
+In React Client Components, import `api` from `~/trpc/react`. This exposes the full `@tanstack/react-query`-backed hook API.
+
+<CodeGroup>
+
+```typescript Query
+import { api } from "~/trpc/react";
+
+export function ProblemSetList() {
+  const { data, isLoading } = api.problemSet.getAll.useQuery();
+
+  if (isLoading) return <p>Loading…</p>;
+  return <ul>{data?.map((ps) => <li key={ps.id}>{ps.title}</li>)}</ul>;
+}
+```
+
+```typescript Mutation
+import { api } from "~/trpc/react";
+
+export function RunButton({ problemId, code }: Props) {
+  const mutation = api.submission.run.useMutation({
+    onSuccess: (data) => {
+      console.log("runId:", data.runId);
+    },
+  });
+
+  return (
+    <button
+      onClick={() => mutation.mutate({ problemId, code })}
+      disabled={mutation.isPending}
+    >
+      Run
+    </button>
+  );
+}
+```
+
+```typescript Input / Output Types
+import type { RouterInputs, RouterOutputs } from "~/trpc/react";
+
+// Inferred from the Zod schema in submissionRouter
+type RunInput = RouterInputs["submission"]["run"];
+// { problemId: string; code: string }
+
+type RunOutput = RouterOutputs["submission"]["run"];
+// { runId: string }
+```
+
+</CodeGroup>
+
+## Input Validation
+
+Every procedure input is validated with a **Zod schema** defined inline in the router. When validation fails, tRPC returns a structured error that includes the full `ZodError` flatten:
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST",
+    "data": {
+      "zodError": {
+        "fieldErrors": { "code": ["Required"] },
+        "formErrors": []
+      }
+    }
+  }
+}
+```
+
+## Error Codes
+
+| Code | Meaning |
+|------|---------|
+| `BAD_REQUEST` | Input failed Zod validation or a required argument is missing |
+| `UNAUTHORIZED` | Caller is not signed in and the procedure is protected |
+| `TOO_MANY_REQUESTS` | Per-user rate limit exceeded (applies to `run` and `submit`) |
+| `INTERNAL_SERVER_ERROR` | Unexpected server-side failure |
+
+<Tip>
+  All tRPC errors surface through the standard `@trpc/client` error-handling
+  path. Use the `onError` callback in a mutation or the `error` property on a
+  query to inspect the code and message.
+</Tip>
+
+## Context
+
+The tRPC context is created in `createTRPCContext` and is available to every resolver as `ctx`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ctx.prisma` | `PrismaClient` | Database client |
+| `ctx.session` | `Session \| null` | NextAuth session; guaranteed non-null in `protectedProcedure` |
+| `ctx.headers` | `Headers` | Incoming request headers |

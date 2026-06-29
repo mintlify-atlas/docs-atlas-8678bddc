@@ -1,0 +1,135 @@
+---
+title: "User Profile: Progress Tracking and Stats"
+sidebarTitle: "Profile"
+description: "Your Buildml profile shows solved problems by difficulty, a GitHub-style activity heatmap, and your overall rank. View other users' profiles via ?userId= query param."
+---
+
+Every Buildml user has a profile page that consolidates their progress across all problem sets. It shows how many problems they have solved at each difficulty tier, a GitHub-style activity heatmap for the past year, and headline stats. Profiles are also shareable — you can view any other user's profile by passing their ID in the URL.
+
+## Profile URLs
+
+| URL | Behaviour |
+|---|---|
+| `/profile` | Shows the currently signed-in user's own profile. Redirects to `/` if no session exists. |
+| `/profile?userId={id}` | Shows the profile of the user with the given ID. Useful for sharing progress with teammates. |
+
+The `ProfilePage` server component reads `searchParams.userId` at request time. If a `userId` param is present it is used as the `targetUserId`; otherwise it falls back to `session?.user?.id`. If neither is available the visitor is redirected to the home page.
+
+<Note>
+  The `/profile` route is covered by Next.js middleware authentication. Users who are not signed in cannot access their own profile — they are redirected to sign in first.
+</Note>
+
+## `user.getProfile` Return Shape
+
+Profile data is loaded via the `user.getProfile` tRPC procedure (public procedure, accepts `{ userId?: string }`). The response contains the following fields:
+
+<ResponseField name="user" type="object" required>
+  Basic identity information for the profile owner.
+
+  <ResponseField name="user.id" type="string" required>
+    The user's unique CUID from the database.
+  </ResponseField>
+
+  <ResponseField name="user.name" type="string | null" required>
+    The user's display name sourced from their Google account.
+  </ResponseField>
+
+  <ResponseField name="user.image" type="string | null" required>
+    URL to the user's Google profile picture. Displayed as a rounded avatar at the top of the profile.
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="difficultyCounts" type="object" required>
+  Number of **unique** problems solved (status `PASS`) per difficulty tier. A problem solved multiple times is counted only once.
+
+  <ResponseField name="difficultyCounts.Easy" type="number" required>
+    Count of unique Easy problems passed.
+  </ResponseField>
+
+  <ResponseField name="difficultyCounts.Medium" type="number" required>
+    Count of unique Medium problems passed.
+  </ResponseField>
+
+  <ResponseField name="difficultyCounts.Hard" type="number" required>
+    Count of unique Hard problems passed.
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="totalCounts" type="object" required>
+  Total number of problems available in the database per difficulty tier, used to render the progress bar denominators.
+
+  <ResponseField name="totalCounts.Easy" type="number" required>
+    Total Easy problems in the system.
+  </ResponseField>
+
+  <ResponseField name="totalCounts.Medium" type="number" required>
+    Total Medium problems in the system.
+  </ResponseField>
+
+  <ResponseField name="totalCounts.Hard" type="number" required>
+    Total Hard problems in the system.
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="solvedCount" type="number" required>
+  Total unique problems solved across all difficulties. Derived from `solvedProblemIds.size` — a `Set` built while iterating accepted submissions.
+</ResponseField>
+
+<ResponseField name="history" type="Record<string, number>" required>
+  A date-keyed map of submission activity used to render the heatmap. Keys are `YYYY-MM-DD` strings; values are the count of `PASS` submissions on that date.
+
+  Example:
+  ```json
+  {
+    "2024-11-03": 2,
+    "2024-11-07": 1,
+    "2025-01-14": 5
+  }
+  ```
+</ResponseField>
+
+## Difficulty Progress Bars
+
+The profile renders a **Difficulty Breakdown** panel showing a labelled progress bar for each tier. The fill percentage is calculated as:
+
+```typescript
+const getPercentage = (count: number, total: number) =>
+  total > 0 ? Math.min((count / total) * 100, 100) : 0;
+```
+
+Each bar displays `{count} / {total}` in the header and animates on load via a CSS `transition-all duration-1000`.
+
+## Activity Heatmap
+
+The `Heatmap` component (`src/app/profile/_components/Heatmap.tsx`) renders a GitHub-style contribution grid for the trailing 52–53 weeks. It takes the `history` map from `getProfile` as its only prop:
+
+```typescript
+interface HeatmapProps {
+  data: Record<string, number>; // YYYY-MM-DD → submission count
+}
+```
+
+### Colour scale
+
+| Submissions on a given day | Cell colour |
+|---|---|
+| `0` | `bg-[var(--line)]` (empty/grey) |
+| `1` | `bg-primary/30` (faint) |
+| `2–4` | `bg-primary/60` (medium) |
+| `5+` | `bg-primary` (full accent) |
+
+Each cell has a `title` attribute showing `"N submissions on <date>"` on hover. The grid is scrollable horizontally on narrow viewports and is labelled with abbreviated month names (Jan–Dec) along the bottom.
+
+## Server-Side Prefetching
+
+Like the leaderboard, the profile page prefetches data on the server before streaming HTML to the client:
+
+```typescript
+void api.user.getProfile.prefetch({ userId: targetUserId });
+```
+
+The `ProfileClient` component then uses `useSuspenseQuery` to hydrate from the server cache instantly, with no loading state visible on first render.
+
+## Sharing Profiles
+
+Each profile page includes a **Share Profile** button. On devices that support the Web Share API, it invokes `navigator.share` with a pre-composed message. On desktop or unsupported browsers it copies the shareable URL (`/profile?userId={id}`) to the clipboard and shows a toast confirmation.

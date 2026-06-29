@@ -1,0 +1,231 @@
+---
+title: "Deploy Buildml on Your Own Infrastructure"
+sidebarTitle: "Self-Hosting"
+description: "Run Buildml in production with PostgreSQL, Upstash Redis, Upstash QStash, Google OAuth, and a FastAPI executor service. Full environment variable reference."
+---
+
+Buildml is designed to run on standard cloud infrastructure. The Next.js application can be deployed to Vercel or any Node.js-capable host, while the FastAPI executor runs as an isolated Docker service. This page covers every required external service, the full environment variable reference, and a production readiness checklist.
+
+## Architecture Overview
+
+A production Buildml deployment spans five infrastructure components that communicate over HTTPS:
+
+```
+┌─────────────────────────────────┐
+│   Browser (user)                │
+└───────────────┬─────────────────┘
+                │ HTTPS
+┌───────────────▼─────────────────┐
+│   Next.js app                   │
+│   (Vercel / any Node host)      │
+│                                 │
+│  tRPC API + NextAuth.js         │
+│  Webhook: /api/webhooks/        │
+│           process-submission/   │
+└──┬─────────────┬────────────────┘
+   │             │
+   │             │ HTTPS (publish job)
+   │    ┌────────▼────────────┐
+   │    │  Upstash QStash     │  ──── delivers webhook back to Next.js
+   │    └─────────────────────┘
+   │
+   │ HTTPS (rate limit + cache)
+┌──▼──────────────────────┐
+│  Upstash Redis           │
+└─────────────────────────┘
+   │
+   │ (direct call from webhook handler)
+┌──▼──────────────────────┐
+│  FastAPI Executor        │
+│  (Docker container)      │
+│  POST /execute           │
+└──┬──────────────────────┘
+   │
+   │ stores results
+┌──▼──────────────────────┐
+│  PostgreSQL              │
+│  (Neon / Supabase /      │
+│   Railway / self-hosted) │
+└─────────────────────────┘
+```
+
+The key separation is that **user code never runs inside the Next.js process**. The executor is an isolated service that receives code payloads, sandboxes execution, and returns structured results. Only the webhook handler touches the executor directly.
+
+## Required Services
+
+### PostgreSQL
+
+Buildml uses Prisma with the `@prisma/adapter-pg` driver. Any standard PostgreSQL 14+ instance works.
+
+Recommended managed providers:
+- [Neon](https://neon.tech) — serverless PostgreSQL, generous free tier
+- [Supabase](https://supabase.com) — PostgreSQL with additional tooling
+- [Railway](https://railway.app) — simple provisioning, good for small teams
+- Self-hosted PostgreSQL via Docker
+
+### Upstash Redis
+
+Redis serves two purposes: **rate limiting** (enforced on every submission) and **ephemeral run result caching** (results from the *Run* action are written here and polled by the client). Create a Redis database at [Upstash Console](https://console.upstash.com/) and copy the REST URL and token.
+
+### Upstash QStash
+
+QStash is the async job queue. When a user submits code, the Next.js tRPC handler publishes a message to QStash, which then delivers it to the `api/webhooks/process-submission/` endpoint. This keeps the HTTP response fast and moves execution off the request thread. Create a QStash instance in the same [Upstash Console](https://console.upstash.com/).
+
+### Google OAuth App
+
+Buildml uses NextAuth.js v5 with the Google provider for authentication. Create an OAuth 2.0 client in [Google Cloud Console](https://console.cloud.google.com/):
+
+1. Navigate to **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
+2. Set the application type to **Web application**.
+3. Add `https://your-domain.com/api/auth/callback/google` as an authorised redirect URI.
+4. Copy the **Client ID** and **Client Secret**.
+
+### FastAPI Executor Service
+
+The executor is a separate Python service distributed as a Docker image. It receives a JSON payload containing user code and problem metadata, runs the code in a sandboxed environment, and returns a structured result. Deploy it behind a private network or a shared secret — it must **not** be publicly accessible without authentication.
+
+Set `EXECUTOR_SECRET` to a strong random string and ensure the executor validates the same secret on every request.
+
+## Environment Variable Reference
+
+<ParamField body="DATABASE_URL" type="string" required>
+  Full PostgreSQL connection string. Prisma uses this to connect via `@prisma/adapter-pg`.
+
+  ```
+  DATABASE_URL="postgresql://user:password@host:5432/buildml"
+  ```
+</ParamField>
+
+<ParamField body="AUTH_SECRET" type="string" required>
+  Random secret string used by NextAuth.js v5 to sign session tokens and cookies. In `src/env.js` this is read as `NEXTAUTH_SECRET`. **Required in production** — omitting it will cause a startup error.
+
+  Generate a secure value with:
+  ```bash
+  openssl rand -base64 32
+  ```
+</ParamField>
+
+<ParamField body="GOOGLE_CLIENT_ID" type="string" required>
+  OAuth 2.0 Client ID from Google Cloud Console. Used by the NextAuth.js Google provider.
+</ParamField>
+
+<ParamField body="GOOGLE_CLIENT_SECRET" type="string" required>
+  OAuth 2.0 Client Secret from Google Cloud Console. Keep this value out of version control.
+</ParamField>
+
+<ParamField body="UPSTASH_REDIS_REST_URL" type="string" required>
+  Upstash Redis REST endpoint URL. Found on the database detail page in the Upstash Console.
+
+  ```
+  UPSTASH_REDIS_REST_URL="https://your-instance.upstash.io"
+  ```
+</ParamField>
+
+<ParamField body="UPSTASH_REDIS_REST_TOKEN" type="string" required>
+  Upstash Redis REST token. Used alongside the URL to authenticate every Redis call from the application.
+</ParamField>
+
+<ParamField body="QSTASH_TOKEN" type="string" required>
+  QStash publish token. The application uses this to enqueue new code execution jobs to the QStash API.
+</ParamField>
+
+<ParamField body="QSTASH_CURRENT_SIGNING_KEY" type="string" required>
+  QStash webhook signing key (current). Used by the `api/webhooks/process-submission/` handler to verify that incoming webhook requests genuinely originate from QStash and have not been tampered with.
+</ParamField>
+
+<ParamField body="QSTASH_NEXT_SIGNING_KEY" type="string" required>
+  QStash webhook signing key (next). QStash rotates signing keys; providing both the current and next key ensures zero-downtime key rotation without dropped webhooks.
+</ParamField>
+
+<ParamField body="DEPLOYMENT_URL" type="string" required>
+  The fully-qualified public URL of your Next.js application. QStash uses this to construct the callback URL when delivering webhook messages.
+
+  ```
+  DEPLOYMENT_URL="https://buildml.yourdomain.com"
+  ```
+
+  Note: in `src/env.js` this is mapped from `NEXT_PUBLIC_DEPLOYMENT_URL` at runtime.
+</ParamField>
+
+<ParamField body="EXECUTOR_URL" type="string" default="http://localhost:8000">
+  The URL of the FastAPI executor service. The webhook handler posts code execution payloads to `EXECUTOR_URL/execute`. In production, this should be an internal network address or a private hostname — not a public URL.
+
+  ```
+  EXECUTOR_URL="http://executor:8000"   # Docker Compose service name example
+  ```
+</ParamField>
+
+<ParamField body="EXECUTOR_SECRET" type="string" default="dev-secret">
+  Shared secret sent with every request from the Next.js webhook handler to the executor. The executor must validate this value on each request. **Change the default `dev-secret` value before deploying to production.**
+</ParamField>
+
+## Production Checklist
+
+<Steps>
+  <Step title="Provision all required services">
+    Ensure you have active instances of PostgreSQL, Upstash Redis, and Upstash QStash, and that your Google OAuth app has the correct production redirect URI configured.
+  </Step>
+
+  <Step title="Set all environment variables">
+    Copy `.env.example` to your deployment environment (Vercel environment settings, Docker secrets, etc.) and fill in every variable listed above. Do not leave any field blank in production.
+  </Step>
+
+  <Step title="Set a strong EXECUTOR_SECRET">
+    <Warning>
+      The default `EXECUTOR_SECRET` value is `dev-secret`. You **must** replace this with a long random string in any production deployment. Anyone who knows this secret can submit arbitrary code to your executor service.
+
+      ```bash
+      openssl rand -hex 32
+      ```
+    </Warning>
+  </Step>
+
+  <Step title="Run database migrations">
+    Apply the Prisma schema to your production PostgreSQL instance using a proper migration (not `db:push`):
+
+    ```bash
+    bun run db:migrate
+    ```
+
+    Then generate the Prisma client:
+
+    ```bash
+    bun prisma generate
+    ```
+  </Step>
+
+  <Step title="Deploy the FastAPI executor">
+    Build and start the executor Docker image. Ensure it:
+    - Is **not** exposed on a public port without authentication.
+    - Reads and validates `EXECUTOR_SECRET` on every inbound request.
+    - Is reachable from the Next.js application at the address you set in `EXECUTOR_URL`.
+  </Step>
+
+  <Step title="Deploy the Next.js application">
+    Deploy to Vercel or your Node.js host. On Vercel, environment variables are set under **Project → Settings → Environment Variables**.
+
+    For Docker builds or CI pipelines that run `next build` without a live database, set the skip flag to bypass env validation:
+
+    ```bash
+    SKIP_ENV_VALIDATION=true bun run build
+    ```
+  </Step>
+
+  <Step title="Configure QStash webhook URL">
+    In the Upstash Console, verify that QStash is configured to deliver messages to:
+
+    ```
+    https://your-domain.com/api/webhooks/process-submission/
+    ```
+
+    This URL must match the value derived from `DEPLOYMENT_URL` in your environment.
+  </Step>
+
+  <Step title="Verify end-to-end execution">
+    Sign in to the production app, open a challenge, and click **Run**. Confirm that the submission transitions from `PENDING` to `PASS`, `FAIL`, or `ERROR`. If it stays `PENDING`, check QStash delivery logs and executor service health.
+  </Step>
+</Steps>
+
+<Warning>
+  Protected routes (`/dashboard/*`, `/practice/*`, `/leaderboard`, `/profile/*`) are enforced by Next.js middleware. Ensure `AUTH_SECRET` is set correctly — an incorrect or missing value will silently break session validation and redirect authenticated users back to the sign-in page.
+</Warning>

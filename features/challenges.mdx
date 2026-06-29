@@ -1,0 +1,79 @@
+---
+title: "AI/ML Coding Challenges and Problem Sets"
+sidebarTitle: "Challenges"
+description: "Browse curated AI/ML problem sets on Buildml. Each set contains ordered Python challenges from Easy to Hard, covering topics like NumPy and neural networks."
+---
+
+Buildml organizes its coding challenges into **problem sets** — curated groups of Python problems that build on each other progressively. Each set covers a specific AI/ML topic (such as NumPy fundamentals, neural networks, or transformer architecture) and guides you from foundational concepts through advanced implementations.
+
+## URL Structure
+
+Navigating challenges follows a three-level hierarchy:
+
+<CardGroup cols={2}>
+  <Card title="/practice" icon="layer-group">
+    The top-level practice page. Lists all available problem sets, each showing its title, description, and total challenge count.
+  </Card>
+  <Card title="/practice/[slug]" icon="list-ol">
+    The problem set detail page. Shows all problems in the set, ordered by their `order` field, each tagged with a difficulty badge.
+  </Card>
+  <Card title="/practice/[slug]/[problemSlug]" icon="code">
+    The interactive problem solver. Renders the full problem statement, Monaco code editor, and console panel for running and submitting code.
+  </Card>
+  <Card title="Example" icon="arrow-right">
+    `/practice/numpy-fundamentals/numpy-create-reshape` opens the "Create and Reshape" problem inside the NumPy Fundamentals set.
+  </Card>
+</CardGroup>
+
+## Problem Structure
+
+Every problem stored in the database has the following fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `title` | `String` | Human-readable name displayed in the header bar and problem list |
+| `slug` | `String` | URL-safe unique identifier used in routing |
+| `description` | `String` (Text) | Full problem statement written in **Markdown with KaTeX math** support |
+| `difficulty` | `String` | One of `Easy`, `Medium`, or `Hard` |
+| `templateCode` | `String` (Text) | Starter Python code pre-loaded into the editor when the problem opens |
+| `testCode` | `String` (Text) | The test script the executor runs to validate the user's solution |
+| `order` | `Int` | Integer determining the problem's position within its set (default: `0`) |
+| `problemSetId` | `String?` | Foreign key linking the problem to its parent `ProblemSet` |
+
+## Difficulty Badges
+
+Problems are colour-coded by difficulty throughout the UI:
+
+| Badge | Colour |
+|---|---|
+| **Easy** | Green (`--tag-beginner-bg` / `--tag-beginner-ink`) |
+| **Medium** | Yellow (`--tag-intermediate-bg` / `--tag-intermediate-ink`) |
+| **Hard** | Red (`--tag-advanced-bg` / `--tag-advanced-ink`) |
+
+Badges appear on the problem set detail page next to each problem title, and again inside the problem header bar when you open a specific challenge.
+
+## Problem Sets
+
+Buildml ships with three seed files that populate the database with ready-to-use problems:
+
+- **`prisma/seed.ts`** — Seeds the _Attention Is All You Need_ set, which walks through the Transformer architecture from the landmark paper, including positional encodings, attention mechanisms, and encoder forward passes — all in pure NumPy.
+- **`prisma/seed-numpy.ts`** — Seeds the _NumPy Fundamentals_ set (9 problems: 3 Easy, 3 Medium, 3 Hard), covering array creation, reshaping, broadcasting, and vectorization.
+- **`prisma/seed-nn.ts`** — Seeds the _Neural Networks from Scratch_ set (6 problems: 2 Easy, 2 Medium, 2 Hard), covering activation functions, forward passes, loss computation, and backpropagation in pure NumPy.
+
+To run a seed file locally:
+
+```bash
+npx tsx prisma/seed-numpy.ts
+npx tsx prisma/seed-nn.ts
+npx tsx prisma/seed.ts
+```
+
+## Navigating Between Problems
+
+Inside a problem page (`/practice/[slug]/[problemSlug]`), a **header bar** spans the top of the viewport. It shows breadcrumb navigation (`Practice → Set Title → Problem Title`) alongside the difficulty badge, and provides **Prev / Next arrow buttons** to jump to adjacent problems in the set.
+
+The previous and next problem slugs are determined at render time by finding the current problem's index in the set's `problems` array (ordered by the `order` field) and reading the entries immediately before and after it.
+
+<Note>
+  Problems within a set are always fetched in ascending `order` — the sequence you see in the UI reflects the intentional learning progression designed into each set.
+</Note>

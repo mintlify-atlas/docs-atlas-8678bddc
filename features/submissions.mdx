@@ -1,0 +1,171 @@
+---
+title: "Code Submission and Execution Pipeline"
+sidebarTitle: "Submissions"
+description: "Buildml executes code asynchronously via Upstash QStash and a FastAPI executor service. Understand the Run vs Submit flow, status polling, and rate limits."
+---
+
+When you click **Run** or **Submit** in the code editor, your code travels through an asynchronous pipeline before results appear in the console. The pipeline is designed to handle execution outside the Next.js request/response cycle, keeping the UI responsive while potentially long-running test suites complete in the background.
+
+<Warning>
+  **Rate limits are enforced per user.** Hitting the limit returns a `TOO_MANY_REQUESTS` error and the submission is not queued. Wait for the window to reset before trying again.
+
+  | Action | Limit | Window |
+  |---|---|---|
+  | **Run** | 5 requests | 10 seconds (sliding) |
+  | **Submit** | 2 requests | 30 seconds (sliding) |
+
+  Limits are tracked via Upstash Redis using a sliding window algorithm (`@upstash/ratelimit`), scoped to the authenticated user's ID.
+</Warning>
+
+## Run vs Submit
+
+### Run mode
+
+**Run** provides fast feedback without persisting anything to the database. Results are stored in Redis under a short-lived key and discarded after retrieval.
+
+<Steps>
+  <Step title="Trigger the mutation">
+    Clicking **RUN** calls the `submission.run` tRPC mutation with `{ problemId, code }`. The server checks the run rate limit (5 req / 10 s) and, if allowed, generates a random `runId` (UUID).
+  </Step>
+  <Step title="Publish to QStash">
+    The server calls `qstash.publishJSON` to enqueue a message to the `/api/webhooks/process-submission` endpoint. The message body is:
+    ```json
+    {
+      "type": "RUN",
+      "runId": "<uuid>",
+      "problemId": "<id>",
+      "code": "<user code>",
+      "userId": "<userId>"
+    }
+    ```
+    The mutation returns `{ runId }` immediately to the client.
+  </Step>
+  <Step title="Webhook processes the job">
+    QStash delivers the message to the webhook handler, which calls the FastAPI executor at `EXECUTOR_URL/execute` with the user's code and the problem slug. The executor runs the problem's test suite inside its Docker container.
+  </Step>
+  <Step title="Result stored in Redis">
+    The webhook writes the execution result to Redis under the key `run_result:{runId}` as `{ status, output }`.
+  </Step>
+  <Step title="Client polls for status">
+    The client calls `submission.getStatus({ runId })` every **1 second**. The query reads `run_result:{runId}` from Redis. Polling stops automatically as soon as `status !== "PENDING"`.
+  </Step>
+</Steps>
+
+### Submit mode
+
+**Submit** is identical to Run in execution, but additionally creates and updates a permanent `Submission` record in the database.
+
+<Steps>
+  <Step title="Trigger the mutation">
+    Clicking **SUBMIT** calls the `submission.submit` tRPC mutation with `{ problemId, code }`. The server checks the submit rate limit (2 req / 30 s).
+  </Step>
+  <Step title="Create a PENDING Submission row">
+    A `Submission` record is inserted into the database immediately:
+    ```typescript
+    await ctx.prisma.submission.create({
+      data: {
+        problemId: input.problemId,
+        userId: ctx.session.user.id,
+        code: input.code,
+        status: "PENDING",
+      },
+    });
+    ```
+    The mutation returns the full submission object (including `id` and `status: "PENDING"`) to the client.
+  </Step>
+  <Step title="Publish to QStash">
+    The server enqueues a message to `/api/webhooks/process-submission`:
+    ```json
+    {
+      "type": "SUBMIT",
+      "submissionId": "<submission.id>",
+      "userId": "<userId>"
+    }
+    ```
+  </Step>
+  <Step title="Webhook executes and updates the DB">
+    The webhook fetches the submission from the DB (to get `problemId` and `code`), calls the executor, and then updates the `Submission` row with the final `status` and `output`.
+  </Step>
+  <Step title="Client polls for status">
+    The client calls `submission.getStatus({ submissionId })` every **1 second**. The query fetches `{ status, output }` from the DB. Polling stops as soon as `status !== "PENDING"`.
+  </Step>
+</Steps>
+
+## Submission Statuses
+
+| Status | Meaning |
+|---|---|
+| `PENDING` | The job has been queued to QStash but the executor has not yet returned a result. The console shows a pulsing animation. |
+| `PASS` | All test cases passed (`passed === total && total > 0`). The console header shows a green "ALL TESTS PASSED" indicator. |
+| `FAIL` | At least one test case failed. Output lists each test with a `✓` or `✗` prefix. |
+| `ERROR` | The executor returned a top-level error (e.g., a syntax error or an unhandled exception before tests ran). The full error message is displayed in red. |
+
+## Executor Interface
+
+The FastAPI executor is called at `EXECUTOR_URL/execute` via HTTP POST, authenticated with an `x-secret` header:
+
+```typescript
+const response = await fetch(`${env.EXECUTOR_URL}/execute`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-secret": env.EXECUTOR_SECRET,
+  },
+  body: JSON.stringify({
+    code,
+    task_id: taskId,          // problem slug
+    problem_set_slug: problemSetSlug,
+  }),
+});
+```
+
+The executor returns a structured JSON response:
+
+```typescript
+interface ExecutorResponse {
+  passed: number;
+  total: number;
+  results: Array<{ name: string; passed: boolean; error?: string }>;
+  stdout: string;
+  stderr?: string;
+  error?: string;
+}
+```
+
+## Output Format
+
+The executor response is converted to a human-readable string displayed in the console panel:
+
+```
+3/5 tests passed
+  ✓ test_basic_case
+  ✓ test_edge_case
+  ✗ test_large_input: AssertionError: arrays not equal
+  ✓ test_dtype_check
+  ✗ test_broadcast: shape mismatch
+
+--- stderr ---
+Traceback (most recent call last): ...
+```
+
+The format is:
+
+1. **Summary line**: `N/M tests passed`
+2. **Per-test lines**: `  ✓ <name>` for passing tests; `  ✗ <name>: <error>` for failing tests
+3. **Stderr block** (if present): appended after a `--- stderr ---` divider
+
+## Polling Behavior
+
+The `submission.getStatus` tRPC query is enabled only when a `runId` or a `PENDING` `submissionId` is present. It uses `refetchInterval` to poll every **1000 ms** and sets `refetchInterval: false` as soon as the returned status is no longer `PENDING`:
+
+```typescript
+refetchInterval: (query) => {
+  const data = query.state.data;
+  if (data && data.status !== "PENDING") {
+    return false; // stop polling
+  }
+  return 1000; // poll every 1 second
+},
+```
+
+Once the terminal status arrives, the result is merged into the local `result` state via a `useEffect`, and the console renders the final output.

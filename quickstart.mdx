@@ -1,47 +1,154 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Buildml in Five Minutes"
+sidebarTitle: "Quickstart"
+description: "Clone and run Buildml locally with Bun, PostgreSQL, and a FastAPI executor. Get from zero to a working dev environment in five minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+This guide walks you through cloning Buildml, wiring up the required services, seeding the database, and launching the development server. By the end you will have a fully functional local instance — including Google OAuth sign-in and sample AI/ML challenges ready to solve.
 
 ## Prerequisites
 
-Before you begin, you must have:
+Make sure the following are installed and available in your `PATH` before you begin:
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
+- **[Bun](https://bun.sh)** — used as the package manager and script runner (`bun install`, `bun run dev`)
+- **Node.js** — required by the Next.js runtime (Bun ships a compatible version; install separately if needed)
+- **PostgreSQL** — a running database server (local install, Docker, or a cloud provider such as Neon or Supabase)
+- **Google OAuth credentials** — a Client ID and Client Secret from [Google Cloud Console](https://console.cloud.google.com/) (needed for NextAuth.js sign-in)
+- **Python 3.10+** — required to run the FastAPI executor service that sandboxes and evaluates user code
 
-## Get started
+<Note>
+  The FastAPI executor service runs as a **separate process** from the Next.js application. It must be reachable at the URL you set in `EXECUTOR_URL` (default: `http://localhost:8000`). Submissions will not execute until this service is running. Refer to the executor's own README for startup instructions.
+</Note>
+
+## Setup
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
-
+  <Step title="Clone the repository">
     ```bash
-    npm install your-package
+    git clone https://github.com/Praashh/buildml.git
+    cd buildml
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Install dependencies">
+    Bun resolves and installs all Node dependencies, then automatically runs `prisma generate` via the `postinstall` hook to produce the typed Prisma client.
 
     ```bash
-    your-cli init
+    bun install
     ```
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Configure environment variables">
+    Copy the example file and open it in your editor:
 
     ```bash
-    your-cli start
+    cp .env.example .env
     ```
+
+    Fill in every value listed below. The application uses `@t3-oss/env-nextjs` with Zod to validate these at startup — missing or malformed values will cause a clear error message rather than a silent failure.
+
+    ```bash
+    # Database
+    DATABASE_URL="postgresql://postgres:password@localhost:5432/buildml"
+
+    # Authentication (NextAuth.js v5)
+    AUTH_SECRET=""                   # Random string — generate with: openssl rand -base64 32
+    GOOGLE_CLIENT_ID=""              # From Google Cloud Console
+    GOOGLE_CLIENT_SECRET=""          # From Google Cloud Console
+
+    # Upstash Redis (rate limiting + run result cache)
+    UPSTASH_REDIS_REST_URL=""
+    UPSTASH_REDIS_REST_TOKEN=""
+
+    # Upstash QStash (async code-execution queue)
+    QSTASH_TOKEN=""
+    QSTASH_CURRENT_SIGNING_KEY=""
+    QSTASH_NEXT_SIGNING_KEY=""
+
+    # Application URLs
+    DEPLOYMENT_URL="http://localhost:3000"   # Public URL QStash posts callbacks to
+    EXECUTOR_URL="http://localhost:8000"     # FastAPI executor endpoint
+    EXECUTOR_SECRET="dev-secret"            # Shared secret for executor auth
+    ```
+
+    <Note>
+      In `src/env.js` the `DEPLOYMENT_URL` value is read from `NEXT_PUBLIC_DEPLOYMENT_URL` at runtime. Set that variable (not just `DEPLOYMENT_URL`) if you need the value client-side as well. For local development a single `DEPLOYMENT_URL` entry in `.env` is sufficient.
+    </Note>
+  </Step>
+
+  <Step title="Push the database schema">
+    Apply the Prisma schema to your PostgreSQL database. Use `db:push` for local development and prototyping — it syncs the schema without creating a migration file.
+
+    ```bash
+    bun run db:push
+    ```
+
+    When you are ready to generate versioned migration files (for example, before a production deploy), use `db:migrate` instead:
+
+    ```bash
+    bun run db:migrate
+    ```
+  </Step>
+
+  <Step title="Seed sample data">
+    Buildml ships three seed scripts that populate the database with real challenge content:
+
+    | Script | Content |
+    |---|---|
+    | `prisma/seed.ts` | Core seed data and initial Problem Sets |
+    | `prisma/seed-numpy.ts` | NumPy Fundamentals challenge set |
+    | `prisma/seed-nn.ts` | Neural Networks challenge set |
+
+    Run each script with Bun:
+
+    ```bash
+    bun prisma/seed.ts
+    bun prisma/seed-numpy.ts
+    bun prisma/seed-nn.ts
+    ```
+  </Step>
+
+  <Step title="Start the development server">
+    Buildml uses Next.js Turbopack in development for fast refresh.
+
+    ```bash
+    bun run dev
+    ```
+  </Step>
+
+  <Step title="Open the app">
+    Navigate to [http://localhost:3000](http://localhost:3000) in your browser. Sign in with Google and start solving challenges.
   </Step>
 </Steps>
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  Run `bun run db:studio` at any time to open **Prisma Studio** — a visual browser-based interface for inspecting and editing your local database rows. It is especially useful for verifying that seed data loaded correctly or for debugging submission records.
 </Tip>
+
+## Available Dev Commands
+
+```bash
+# Start development server (Next.js + Turbopack)
+bun run dev
+
+# Production build
+bun run build
+
+# TypeScript type checking (no emit)
+bun run typecheck
+
+# Lint and format check (Biome)
+bun run check
+
+# Auto-fix linting and formatting
+bun run check:write
+
+# Push schema changes to the database (no migration file)
+bun run db:push
+
+# Create a versioned migration file
+bun run db:migrate
+
+# Open Prisma Studio GUI
+bun run db:studio
+```

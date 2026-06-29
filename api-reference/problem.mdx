@@ -1,0 +1,237 @@
+---
+title: "problem Router: Fetch Individual Problems"
+sidebarTitle: "problem"
+description: "The problem tRPC router provides getAll and getBySlug procedures to fetch AI/ML coding problems. Both are public procedures requiring no authentication."
+---
+
+The `problemRouter` exposes two public query procedures for listing and retrieving individual AI/ML coding problems. Every `Problem` record carries a full problem statement, Python starter code (`templateCode`), the Python test script used by the executor (`testCode`), and a difficulty tier. No authentication is required to read problem data.
+
+---
+
+## `problem.getAll`
+
+Returns every problem in the database, ordered by creation date (newest first). Each result includes the parent `problemSet` object so you can display set metadata alongside problems in listing views.
+
+**Type:** query — **Auth:** public
+
+**Input:** none
+
+<CodeGroup>
+
+```typescript Server Component
+import { api } from '~/trpc/server';
+
+const problems = await api.problem.getAll();
+// problems[0].problemSet => parent ProblemSet record
+```
+
+```typescript Client Component
+'use client';
+import { api } from '~/trpc/react';
+
+const { data: problems } = api.problem.getAll.useQuery();
+```
+
+</CodeGroup>
+
+### Response
+
+An array of `Problem` objects ordered by `createdAt` descending. Each element has the following shape:
+
+<ResponseField name="id" type="string" required>
+  Unique CUID identifier for the problem.
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Display title of the problem (e.g., `"Implement Sigmoid"`).
+</ResponseField>
+
+<ResponseField name="slug" type="string" required>
+  URL-safe unique identifier used in routing (e.g., `"implement-sigmoid"`).
+</ResponseField>
+
+<ResponseField name="description" type="string" required>
+  Full problem statement written in Markdown. Stored as `@db.Text`.
+</ResponseField>
+
+<ResponseField name="difficulty" type="string" required>
+  Difficulty tier: `"Easy"`, `"Medium"`, or `"Hard"`.
+</ResponseField>
+
+<ResponseField name="templateCode" type="string" required>
+  Python starter code presented to the user in the code editor (`solution.py`). Stored as `@db.Text`.
+</ResponseField>
+
+<ResponseField name="testCode" type="string" required>
+  Python verification script run by the FastAPI executor against the user's submission (`tests.py`). Stored as `@db.Text`.
+</ResponseField>
+
+<ResponseField name="order" type="number" required>
+  Position of this problem within its parent set. Defaults to `0`.
+</ResponseField>
+
+<ResponseField name="problemSetId" type="string | null">
+  Foreign key of the parent `ProblemSet`. May be `null` for standalone problems.
+</ResponseField>
+
+<ResponseField name="problemSet" type="ProblemSet | null">
+  The parent problem set record, eagerly loaded via Prisma `include`.
+
+  <Expandable title="ProblemSet fields">
+    <ResponseField name="id" type="string" required>
+      Unique CUID identifier of the problem set.
+    </ResponseField>
+
+    <ResponseField name="title" type="string" required>
+      Human-readable title (e.g., `"NumPy Fundamentals"`).
+    </ResponseField>
+
+    <ResponseField name="slug" type="string" required>
+      URL-safe slug of the problem set.
+    </ResponseField>
+
+    <ResponseField name="description" type="string | null">
+      Optional description of the problem set.
+    </ResponseField>
+
+    <ResponseField name="createdAt" type="DateTime" required>
+      ISO 8601 creation timestamp of the problem set.
+    </ResponseField>
+
+    <ResponseField name="updatedAt" type="DateTime" required>
+      ISO 8601 last-updated timestamp of the problem set.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="createdAt" type="DateTime" required>
+  ISO 8601 timestamp of when the problem was created.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="DateTime" required>
+  ISO 8601 timestamp of the last update to the problem record.
+</ResponseField>
+
+---
+
+## `problem.getBySlug`
+
+Fetches a single problem by its unique slug, including the parent `problemSet`. Returns `null` if no matching record is found. Use this procedure on the problem detail / editor page to load everything the UI needs in one round-trip.
+
+**Type:** query — **Auth:** public
+
+**Input:** `{ slug: string }`
+
+<ParamField query="slug" type="string" required>
+  The URL-safe slug of the problem to fetch (e.g., `"implement-sigmoid"`).
+  Validated by Zod as a non-empty string.
+</ParamField>
+
+<CodeGroup>
+
+```typescript Server Component
+import { api } from '~/trpc/server';
+import { notFound } from 'next/navigation';
+
+const problem = await api.problem.getBySlug({ slug: 'implement-sigmoid' });
+if (!problem) notFound();
+
+// problem.templateCode => Python starter to show in the editor
+// problem.testCode     => Python test script (executor-internal)
+```
+
+```typescript Client Component
+'use client';
+import { api } from '~/trpc/react';
+
+const { data: problem } = api.problem.getBySlug.useQuery({
+  slug: 'implement-sigmoid',
+});
+```
+
+</CodeGroup>
+
+### Response
+
+A single `Problem` object — or `null` when no record matches the given slug.
+
+<ResponseField name="id" type="string" required>
+  Unique CUID identifier for the problem.
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Display title (e.g., `"Implement Sigmoid"`).
+</ResponseField>
+
+<ResponseField name="slug" type="string" required>
+  URL-safe unique identifier.
+</ResponseField>
+
+<ResponseField name="description" type="string" required>
+  Full Markdown problem statement shown to the user in the description panel.
+</ResponseField>
+
+<ResponseField name="difficulty" type="string" required>
+  Difficulty tier: `"Easy"`, `"Medium"`, or `"Hard"`.
+</ResponseField>
+
+<ResponseField name="templateCode" type="string" required>
+  Python starter code pre-loaded into the editor when the user opens the problem for the first time.
+</ResponseField>
+
+<ResponseField name="testCode" type="string" required>
+  Python test script used internally by the FastAPI executor to validate the user's solution. Not displayed in the UI.
+</ResponseField>
+
+<ResponseField name="order" type="number" required>
+  Integer position within the parent problem set. Defaults to `0`.
+</ResponseField>
+
+<ResponseField name="problemSetId" type="string | null">
+  Foreign key of the parent `ProblemSet`. May be `null` for standalone problems.
+</ResponseField>
+
+<ResponseField name="problemSet" type="ProblemSet | null">
+  The parent problem set, eagerly loaded.
+
+  <Expandable title="ProblemSet fields">
+    <ResponseField name="id" type="string" required>
+      Unique CUID identifier of the problem set.
+    </ResponseField>
+
+    <ResponseField name="title" type="string" required>
+      Human-readable title of the problem set.
+    </ResponseField>
+
+    <ResponseField name="slug" type="string" required>
+      URL-safe slug of the problem set.
+    </ResponseField>
+
+    <ResponseField name="description" type="string | null">
+      Optional description of the problem set.
+    </ResponseField>
+
+    <ResponseField name="createdAt" type="DateTime" required>
+      ISO 8601 creation timestamp.
+    </ResponseField>
+
+    <ResponseField name="updatedAt" type="DateTime" required>
+      ISO 8601 last-updated timestamp.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="createdAt" type="DateTime" required>
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="DateTime" required>
+  ISO 8601 last-updated timestamp.
+</ResponseField>
+
+<Note>
+  `testCode` is fetched alongside the problem record but should **not** be
+  exposed to users in the browser — avoid rendering it in client components to
+  prevent cheating. Prefer loading this field only in Server Components or
+  API routes that interact with the executor.
+</Note>

@@ -1,0 +1,189 @@
+---
+title: "problemSet Router: Fetch Problem Sets"
+sidebarTitle: "problemSet"
+description: "The problemSet tRPC router exposes getAll and getBySlug procedures to fetch AI/ML problem sets with their problems. Both are public procedures."
+---
+
+The `problemSetRouter` provides two public query procedures for listing and retrieving AI/ML problem sets. Problem sets are curated collections of coding challenges grouped by topic (e.g., NumPy fundamentals, ML model training). No authentication is required to call either procedure.
+
+---
+
+## `problemSet.getAll`
+
+Returns every problem set in the database, ordered by creation date (newest first). Each record includes a `_count.problems` field so you can display problem counts without fetching the full problem list.
+
+**Type:** query — **Auth:** public
+
+**Input:** none
+
+<CodeGroup>
+
+```typescript Server Component
+import { api } from '~/trpc/server';
+
+const sets = await api.problemSet.getAll();
+// sets[0]._count.problems => number of problems in the set
+```
+
+```typescript Client Component
+'use client';
+import { api } from '~/trpc/react';
+
+const { data: sets } = api.problemSet.getAll.useQuery();
+```
+
+</CodeGroup>
+
+### Response
+
+An array of `ProblemSet` objects. Each element has the following shape:
+
+<ResponseField name="id" type="string" required>
+  Unique CUID identifier for the problem set.
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Human-readable title of the problem set (e.g., `"NumPy Fundamentals"`).
+</ResponseField>
+
+<ResponseField name="slug" type="string" required>
+  URL-safe unique identifier used in routing (e.g., `"numpy-fundamentals"`).
+</ResponseField>
+
+<ResponseField name="description" type="string | null">
+  Optional longer description of the problem set. Stored as full text; may be `null`.
+</ResponseField>
+
+<ResponseField name="createdAt" type="DateTime" required>
+  ISO 8601 timestamp of when the problem set was created.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="DateTime" required>
+  ISO 8601 timestamp of the last update to the problem set record.
+</ResponseField>
+
+<ResponseField name="_count" type="object" required>
+  Prisma aggregation object included on every result.
+
+  <Expandable title="_count fields">
+    <ResponseField name="_count.problems" type="number" required>
+      Total number of `Problem` records that belong to this set.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## `problemSet.getBySlug`
+
+Fetches a single problem set by its unique slug, including the full ordered list of problems that belong to it. Returns `null` if no matching record is found.
+
+**Type:** query — **Auth:** public
+
+**Input:** `{ slug: string }`
+
+<ParamField query="slug" type="string" required>
+  The URL-safe slug of the problem set to fetch (e.g., `"numpy-fundamentals"`).
+  Validated by Zod as a non-empty string.
+</ParamField>
+
+<CodeGroup>
+
+```typescript Server Component
+import { api } from '~/trpc/server';
+
+const set = await api.problemSet.getBySlug({ slug: 'numpy-fundamentals' });
+
+if (!set) {
+  notFound();
+}
+
+// set.problems is ordered by `order` ascending
+```
+
+```typescript Client Component
+'use client';
+import { api } from '~/trpc/react';
+
+const { data: set } = api.problemSet.getBySlug.useQuery({
+  slug: 'numpy-fundamentals',
+});
+```
+
+</CodeGroup>
+
+### Response
+
+A single `ProblemSet` object — or `null` when no record matches the given slug.
+
+<ResponseField name="id" type="string" required>
+  Unique CUID identifier for the problem set.
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Human-readable title (e.g., `"NumPy Fundamentals"`).
+</ResponseField>
+
+<ResponseField name="slug" type="string" required>
+  URL-safe unique identifier.
+</ResponseField>
+
+<ResponseField name="description" type="string | null">
+  Optional full-text description of the problem set.
+</ResponseField>
+
+<ResponseField name="createdAt" type="DateTime" required>
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="DateTime" required>
+  ISO 8601 last-updated timestamp.
+</ResponseField>
+
+<ResponseField name="problems" type="Problem[]" required>
+  Ordered list of problems that belong to this set (`orderBy: { order: 'asc' }`).
+
+  <Expandable title="Problem fields">
+    <ResponseField name="id" type="string" required>
+      Unique CUID identifier for the problem.
+    </ResponseField>
+
+    <ResponseField name="title" type="string" required>
+      Display title of the problem (e.g., `"Implement Sigmoid"`).
+    </ResponseField>
+
+    <ResponseField name="slug" type="string" required>
+      URL-safe unique identifier for the problem (e.g., `"implement-sigmoid"`).
+    </ResponseField>
+
+    <ResponseField name="description" type="string" required>
+      Full problem statement written in Markdown.
+    </ResponseField>
+
+    <ResponseField name="difficulty" type="string" required>
+      Difficulty tier: `"Easy"`, `"Medium"`, or `"Hard"`.
+    </ResponseField>
+
+    <ResponseField name="templateCode" type="string" required>
+      Python starter code shown to the user in the editor (e.g., `solution.py`).
+    </ResponseField>
+
+    <ResponseField name="testCode" type="string" required>
+      Python test script used by the executor to verify the user's solution (e.g., `tests.py`).
+    </ResponseField>
+
+    <ResponseField name="order" type="number" required>
+      Integer position of this problem within the parent set. Defaults to `0`.
+    </ResponseField>
+
+    <ResponseField name="problemSetId" type="string | null">
+      Foreign key linking this problem to its parent `ProblemSet`. May be `null` for standalone problems.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Note>
+  `getBySlug` uses Prisma's `findUnique`, so it performs a single indexed lookup
+  on the `slug` column. The included `problems` array is sorted by `order` ascending,
+  reflecting the intended curriculum sequence.
+</Note>

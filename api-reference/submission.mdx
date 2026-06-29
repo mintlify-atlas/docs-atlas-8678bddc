@@ -1,0 +1,222 @@
+---
+title: "submission Router: Run and Submit Code"
+sidebarTitle: "submission"
+description: "The submission tRPC router provides run, submit, and getStatus procedures. All require authentication. Run executes code without saving; submit persists results."
+---
+
+The `submissionRouter` handles code execution and grading for Buildml problems. All three procedures require an authenticated session. Execution is asynchronous — both `run` and `submit` dispatch a job to [QStash](https://upstash.com/docs/qstash/overall/getstarted) and return immediately. You then poll `getStatus` until the job finishes. Rate limits are enforced per user via Upstash Redis to prevent abuse.
+
+---
+
+## `submission.run`
+
+Executes user code against the problem's test suite without persisting a result to the database. Ideal for the "Run" button in the editor where quick feedback is needed but the attempt shouldn't count toward the user's submission history.
+
+**Type:** mutation — **Auth:** protected (session required)
+
+**Input:** `{ problemId: string, code: string }`
+
+<ParamField body="problemId" type="string" required>
+  The CUID of the `Problem` to run the code against.
+</ParamField>
+
+<ParamField body="code" type="string" required>
+  The user's Python solution code to execute.
+</ParamField>
+
+**Rate limit:** 5 requests per 10 seconds per user. Exceeding this limit throws a `TOO_MANY_REQUESTS` error.
+
+### Flow
+
+<Steps>
+  <Step title="Validate rate limit">
+    Checks the `runRateLimit` bucket (5 requests / 10 s) keyed by `userId` in Redis. Throws `TOO_MANY_REQUESTS` if the bucket is exhausted.
+  </Step>
+  <Step title="Generate a run ID">
+    Creates a random UUID (`crypto.randomUUID()`) to uniquely identify this execution attempt.
+  </Step>
+  <Step title="Publish to QStash">
+    Dispatches a `RUN` job to the `/api/webhooks/process-submission` endpoint via QStash, carrying `type`, `runId`, `problemId`, `code`, and `userId`.
+  </Step>
+  <Step title="Return the run ID">
+    Returns `{ runId }` immediately. The caller should poll `getStatus({ runId })` to retrieve the result once execution completes.
+  </Step>
+</Steps>
+
+### Usage
+
+```typescript
+const runMutation = api.submission.run.useMutation({
+  onSuccess: ({ runId }) => {
+    // Begin polling getStatus with the returned runId
+  },
+});
+
+runMutation.mutate({ problemId: problem.id, code });
+```
+
+### Response
+
+<ResponseField name="runId" type="string" required>
+  A UUID string identifying this run attempt. Use it as the input to `getStatus`.
+</ResponseField>
+
+### Errors
+
+<Warning>
+  Submitting more than 5 run requests within a 10-second window throws:
+  `TRPCClientError: Rate limit exceeded. Please wait a moment.` with code `TOO_MANY_REQUESTS`.
+</Warning>
+
+---
+
+## `submission.submit`
+
+Executes user code and persists the result as a `Submission` record in PostgreSQL. Use this for the "Submit" button — the result appears in the user's history and counts toward leaderboard scores.
+
+**Type:** mutation — **Auth:** protected (session required)
+
+**Input:** `{ problemId: string, code: string }`
+
+<ParamField body="problemId" type="string" required>
+  The CUID of the `Problem` to submit the code against.
+</ParamField>
+
+<ParamField body="code" type="string" required>
+  The user's Python solution code to submit.
+</ParamField>
+
+**Rate limit:** 2 requests per 30 seconds per user. Exceeding this limit throws a `TOO_MANY_REQUESTS` error.
+
+### Flow
+
+<Steps>
+  <Step title="Validate rate limit">
+    Checks the `submitRateLimit` bucket (2 requests / 30 s) keyed by `userId`. Throws `TOO_MANY_REQUESTS` if exhausted.
+  </Step>
+  <Step title="Create Submission record">
+    Inserts a new `Submission` row into PostgreSQL with `status: "PENDING"`, linking it to `problemId` and the authenticated `userId`.
+  </Step>
+  <Step title="Publish to QStash">
+    Dispatches a `SUBMIT` job to `/api/webhooks/process-submission` via QStash, carrying `type`, `submissionId`, and `userId`.
+  </Step>
+  <Step title="Return the submission">
+    Returns the newly created `Submission` record immediately. Poll `getStatus({ submissionId: submission.id })` to track progress.
+  </Step>
+</Steps>
+
+### Usage
+
+```typescript
+const submitMutation = api.submission.submit.useMutation({
+  onSuccess: (submission) => {
+    // submission.status is initially "PENDING"
+    // poll getStatus({ submissionId: submission.id })
+  },
+});
+
+submitMutation.mutate({ problemId: problem.id, code });
+```
+
+### Response
+
+The newly created `Submission` database record:
+
+<ResponseField name="id" type="string" required>
+  Unique CUID identifier for the submission.
+</ResponseField>
+
+<ResponseField name="problemId" type="string" required>
+  CUID of the associated `Problem`.
+</ResponseField>
+
+<ResponseField name="userId" type="string" required>
+  CUID of the authenticated user who submitted the code.
+</ResponseField>
+
+<ResponseField name="code" type="string" required>
+  The Python code that was submitted.
+</ResponseField>
+
+<ResponseField name="status" type="string" required>
+  Always `"PENDING"` at creation time. The webhook worker updates this to `PASS`, `FAIL`, or `ERROR` after execution completes.
+</ResponseField>
+
+<ResponseField name="output" type="string | null">
+  Execution output. `null` initially; populated by the webhook worker after the executor responds.
+</ResponseField>
+
+<ResponseField name="createdAt" type="DateTime" required>
+  ISO 8601 timestamp of submission creation.
+</ResponseField>
+
+### Errors
+
+<Warning>
+  Submitting more than 2 times within a 30-second window throws:
+  `TRPCClientError: Rate limit exceeded. Please wait a moment.` with code `TOO_MANY_REQUESTS`.
+</Warning>
+
+---
+
+## `submission.getStatus`
+
+Polls for the result of a `run` or `submit` operation. Exactly one of `submissionId` or `runId` must be provided. This is the single procedure for checking execution progress regardless of whether the attempt was a run (ephemeral, stored in Redis) or a full submission (persistent, stored in PostgreSQL).
+
+**Type:** query — **Auth:** protected (session required)
+
+**Input:** `{ submissionId?: string, runId?: string }`
+
+<ParamField query="submissionId" type="string">
+  The CUID of a `Submission` record returned by `submission.submit`. When provided, the status is read from PostgreSQL.
+</ParamField>
+
+<ParamField query="runId" type="string">
+  The UUID returned by `submission.run`. When provided, the status is read from the Redis key `run_result:{runId}`. Returns `{ status: "PENDING", output: null }` if the executor has not yet written a result.
+</ParamField>
+
+<Note>
+  At least one of `submissionId` or `runId` must be supplied. If neither is provided, the procedure throws a `BAD_REQUEST` error.
+</Note>
+
+### Polling Pattern
+
+Use `refetchInterval` to automatically re-query until the status leaves `PENDING`:
+
+```typescript
+const { data: statusData } = api.submission.getStatus.useQuery(
+  { runId: result?.runId },
+  {
+    enabled: !!result?.runId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && data.status !== 'PENDING') return false; // stop polling
+      return 1000; // poll every 1 second
+    },
+  },
+);
+```
+
+### Response
+
+<ResponseField name="status" type="string" required>
+  Current execution status. One of:
+
+  | Value | Meaning |
+  |-------|---------|
+  | `PENDING` | The job has been dispatched but the executor has not yet responded. |
+  | `PASS` | All test cases passed. |
+  | `FAIL` | One or more test cases failed. |
+  | `ERROR` | The code raised an unhandled exception or the executor encountered an error. |
+</ResponseField>
+
+<ResponseField name="output" type="string | null">
+  Human-readable output string produced by the executor. Format: `"N/M tests passed"` followed by per-test results (`✓` / `✗`) and optional stderr. `null` while still `PENDING`.
+</ResponseField>
+
+### Errors
+
+<Warning>
+  Calling `getStatus` without providing either `submissionId` or `runId` throws:
+  `TRPCClientError: Either submissionId or runId must be provided` with code `BAD_REQUEST`.
+</Warning>
